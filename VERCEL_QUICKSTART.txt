@@ -1,0 +1,18 @@
+INQUISITOR v1.0.8 · GALAHAD — VERCEL PRESENTATION DEMO
+
+1. Push this folder to a GitHub repository.
+2. Open Vercel > Add New > Project.
+3. Import the GitHub repository.
+4. Leave Framework Preset / build settings at automatic defaults.
+5. Optional environment variable:
+      INQUISITOR_SECRET=<long random string>
+6. Deploy.
+
+Demo accounts:
+  Contestant  contestant / inquisitor
+  Judge       judge       / inquisitor
+  Director    admin       / inquisitor
+
+This build uses /tmp for its demo SQLite database on Vercel.
+Data can reset between serverless instances. Auto-judge/Docker is disabled.
+Use it for presentation and workflow demonstrations only.

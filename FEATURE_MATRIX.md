@@ -1,8 +1,8 @@
-# Inquisitor v1.0.7 — Galahad feature matrix
+# Inquisitor v1.0.8 — Galahad feature matrix
 
-This matrix maps the deployable v1.0.7 release to the complete feature set requested during design.
+This matrix maps the v1.0.8 Vercel presentation/demo release to the complete feature set requested during design.
 
-| # | Requested capability | v1.0.7 implementation |
+| # | Requested capability | v1.0.8 implementation |
 |---:|---|---|
 | 1 | Contest scope | Department, College, Cross-College / University, City, Regional, National, International in Contest Director → Contests |
 | 2 | Individual / Team format | Per-contest competition mode with team aggregation and ICPC API compatibility mapping |

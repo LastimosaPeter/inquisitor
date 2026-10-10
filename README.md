@@ -1,4 +1,7 @@
-# Inquisitor v1.0.7 — Galahad
+# Inquisitor v1.0.8 — Galahad (Vercel Presentation Demo)
+
+> **Vercel presentation build:** This package is configured to demonstrate the Inquisitor website and workflows on Vercel. Its SQLite data is ephemeral and the continuous/Docker auto-judge is disabled. See `VERCEL_DEMO.md` before deploying.
+
 
 **The official contest management platform of TACTICS x ACPC 2026**
 

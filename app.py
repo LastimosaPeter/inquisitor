@@ -28,7 +28,12 @@ from judge import LANGUAGES, compiler_status, detect_language_from_filename, jud
 import features_v1 as fx
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = Path(os.environ.get("INQUISITOR_DATA_DIR", str(BASE_DIR))).resolve()
+# Vercel presentation mode uses the only writable area available to the
+# serverless function. The database and generated judge/test files are
+# intentionally ephemeral: this build is for UI/workflow demonstrations only.
+VERCEL_DEMO = os.environ.get("VERCEL") == "1" or os.environ.get("INQUISITOR_VERCEL_DEMO", "0") == "1"
+_default_data_dir = "/tmp/inquisitor-demo" if VERCEL_DEMO else str(BASE_DIR)
+DATA_DIR = Path(os.environ.get("INQUISITOR_DATA_DIR", _default_data_dir)).resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "inquisitor.db"
 PROBLEMS_DIR = DATA_DIR / "problems"
@@ -977,7 +982,7 @@ def inject_globals():
         "cstate": contest_state(contest) if contest else None,
         "languages": LANGUAGES,
         "compiler_status": compiler_status(),
-        "version": "v1.0.7",
+        "version": "v1.0.8",
         "release_name": "Galahad",
         "csrf_token": session["csrf_token"],
         "staff_role": staff_role,
@@ -1025,7 +1030,7 @@ def security_headers(response):
 def healthz():
     try:
         conn=db_connect(); conn.execute("SELECT 1").fetchone(); conn.close()
-        return jsonify({"status":"ok","version":"1.0.7"})
+        return jsonify({"status":"ok","version":"1.0.8","mode":"vercel-demo" if VERCEL_DEMO else "server"})
     except Exception:
         return jsonify({"status":"error"}),503
 
@@ -2066,7 +2071,7 @@ def api_headers(resp):
 
 @app.get("/api/")
 def api_root():
-    return jsonify({"version":"draft","version_url":"https://ccs-specs.icpc.io/draft/contest_api","provider":{"name":"Inquisitor","version":"1.0.7","logo":[{"href":"/api/logo","filename":"inquisitor-logo.png","mime":"image/png","width":540,"height":1080,"tags":["dark"]}]}})
+    return jsonify({"version":"draft","version_url":"https://ccs-specs.icpc.io/draft/contest_api","provider":{"name":"Inquisitor","version":"1.0.8","logo":[{"href":"/api/logo","filename":"inquisitor-logo.png","mime":"image/png","width":540,"height":1080,"tags":["dark"]}]}})
 
 
 @app.get("/api/logo")
@@ -2470,6 +2475,15 @@ def api_event_feed(cid):
 
 app.register_blueprint(fx.bp)
 
+# Vercel imports the Flask application instead of executing app.py as
+# __main__. Initialize an idempotent demo database during a cold start so the
+# presentation site has working logins, sample problems, leaderboards and
+# administration screens. Nothing in /tmp is guaranteed to persist.
+if VERCEL_DEMO:
+    os.environ.setdefault("INQUISITOR_DEMO_ACCOUNTS", "1")
+    os.environ.setdefault("INQUISITOR_JUDGE_BACKEND", "disabled")
+    init_db()
+
 # ---------------- Development judge worker ----------------
 def judging_worker():
     while True:
@@ -2506,7 +2520,7 @@ def start_worker():
 
 if __name__ == "__main__":
     init_db(); start_worker(); fx.start_maintenance_worker()
-    print("\nInquisitor v1.0.7 — Galahad")
+    print("\nInquisitor v1.0.8 — Galahad")
     print("Contestant: contestant / inquisitor")
     print("Judge:       judge / inquisitor")
     print("Admin:       admin / inquisitor")

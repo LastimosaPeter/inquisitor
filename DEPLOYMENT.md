@@ -1,4 +1,4 @@
-# Inquisitor v1.0.7 — Galahad deployment
+# Inquisitor v1.0.8 — Galahad deployment
 
 ## Recommended production target
 Linux (Ubuntu 24.04 or Debian 12), Docker Engine + Docker Compose plugin, 4+ CPU cores, 8+ GB RAM, SSD storage, and a private LAN for an on-site contest. A public deployment should sit behind HTTPS.

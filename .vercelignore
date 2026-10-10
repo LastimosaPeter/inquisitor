@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.db
+backups/
+problems/
+*.zip
+Dockerfile
+Dockerfile.judge-runtime
+docker-compose.yml
+Caddyfile
+verify_judge_runtime.sh
+start_linux.sh
+start_windows.bat

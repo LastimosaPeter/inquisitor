@@ -1,4 +1,4 @@
-# Inquisitor v1.0.7 — Galahad
+# Inquisitor v1.0.8 — Galahad
 ## Programming Language Deployment Guide
 
 Inquisitor supports these contest languages:
