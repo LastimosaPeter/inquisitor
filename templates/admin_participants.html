@@ -1,0 +1,71 @@
+{% extends 'base.html' %}
+{% block title %}Contestants{% endblock %}
+{% block page_title %}Contestants{% endblock %}
+{% block content %}
+<div class="grid one-two people-admin-grid">
+<section class="stack">
+  <section class="card form-card-spacious">
+    <span class="eyebrow">Manual registration</span><h2>Create contestant</h2>
+    <form method="post" class="form-stack">
+      <label>Full name<input name="display_name" required></label>
+      <div class="form-row"><label>Department / program<input name="department" placeholder="Department of Computer Science" required></label><label>College<input name="college" placeholder="College of Computer Studies"></label></div>
+      <div class="form-row"><label>School / affiliation<input name="affiliation" value="Ateneo de Naga University"></label><label>Year level<input name="year_level" placeholder="3rd Year"></label></div>
+      {% if contest['competition_mode']=='team' %}<label>Team name<input name="team_name" placeholder="Team Nebula"><small class="muted">Maximum {{ contest['max_team_size'] }} members per team.</small></label>{% endif %}
+      <div class="form-row"><label>Username<input name="username" required><small class="muted">Used for sign-in now.</small></label><label>Email <small class="muted">Optional; may be used as the ADNU account sign-in later.</small><input type="email" name="email" placeholder="name@adnu.edu.ph"></label></div>
+      <label>Initial password<input name="password" type="password" minlength="6" required></label>
+      <details class="form-section"><summary>Venue and support details</summary><div class="form-stack top-gap"><div class="form-row"><label>Seat<input name="seat" placeholder="Lab A · Seat 17"></label><label>Workstation<input name="workstation" placeholder="PC-17"></label></div><div class="form-row"><label>Coach<input name="coach_name"></label><label>Adviser<input name="adviser_name"></label></div></div></details>
+      <button class="button" type="submit">Create and register</button>
+    </form>
+  </section>
+  <section class="card"><div class="card-head"><div><span class="eyebrow">Bulk registration</span><h2>Import CSV</h2></div><a class="tiny buttonlike compact-button" href="{{ url_for('v1.participation_certificates_zip') }}">Certificates ZIP</a></div><p class="muted">Required: <span class="kbd">username</span>, <span class="kbd">display_name</span>, <span class="kbd">department</span>. Optional: email, password, affiliation, college, year_level, team_name.</p><form method="post" action="{{ url_for('v1.participants_import_csv') }}" enctype="multipart/form-data" class="form-stack"><label>CSV file<input type="file" name="csv_file" accept=".csv" required></label><button class="button secondary" type="submit">Import contestants</button></form></section>
+  <section class="card"><span class="eyebrow">Registration policy</span><h2>{{ 'Approval required' if contest['requires_approval'] else 'Automatic approval' }}</h2><p class="muted">Self-registration is {{ 'open' if contest['signup_open'] else 'closed' }}. Contest scope: {{ contest['scope']|replace('_',' ')|title }}.</p>{% if contest['eligibility_note'] %}<p>{{ contest['eligibility_note'] }}</p>{% endif %}</section>
+</section>
+
+<section class="card people-list-card">
+  <div class="card-head"><div><span class="eyebrow">{{ contest['name'] }}</span><h2>Contestants & check-in</h2></div><span class="badge neutral">{{ participants|length }}</span></div>
+  <div class="people-list">
+  {% for p in participants %}
+    <article class="person-record {{ 'disqualified-row' if p['disqualified'] else '' }}">
+      <div class="person-primary">
+        <strong>{{ p['display_name'] }}</strong>
+        <span>{{ p['department'] or 'Department not set' }}</span>
+        {% if p['college'] %}<span>{{ p['college'] }}</span>{% endif %}
+        {% if p['affiliation'] %}<span>{{ p['affiliation'] }}</span>{% endif %}
+        {% if p['year_level'] %}<span>{{ p['year_level'] }}</span>{% endif %}
+        {% if p['disqualified'] %}<span class="dq-reason">Disqualified: {{ p['disqualification_reason'] }}</span>{% endif %}
+      </div>
+      <div class="person-account">
+        <span class="meta-label">Account</span>
+        <strong>@{{ p['username'] }}</strong>
+        <span>{{ p['email'] or 'Email not set' }}</span>
+        {% if p['temporary_password'] %}<span class="badge warn">Temporary password</span>{% endif %}
+      </div>
+      <div class="person-status">
+        <span class="meta-label">Registration</span>
+        {% if p['registered'] %}<span class="badge {{ 'ok' if p['approval_status']=='APPROVED' else ('bad' if p['approval_status']=='REJECTED' else 'warn') }}">{{ p['approval_status'] }}</span><span>{{ p['registration_status']|replace('_',' ')|title }}</span>{% else %}<span class="badge neutral">Not registered</span>{% endif %}
+        {% if p['seat'] or p['workstation'] %}<span>{{ p['seat'] or 'Seat not set' }}</span><span>{{ p['workstation'] or 'Workstation not set' }}</span>{% endif %}
+        {% if contest['competition_mode']=='team' and p['team_name'] %}<span>Team: {{ p['team_name'] }}</span>{% endif %}
+      </div>
+      <div class="person-actions-block">
+        <span class="meta-label action-label">Action</span>
+        <div class="person-actions">
+        <details class="action-panel"><summary>Profile</summary><form method="post" action="{{ url_for('admin_update_participant_profile', aid=p['id']) }}" class="profile-form clean-popover"><label>Name<input name="display_name" value="{{ p['display_name'] }}" required></label><label>Username<input name="username" value="{{ p['username'] }}" required></label><label>Email<input type="email" name="email" value="{{ p['email'] }}" placeholder="name@adnu.edu.ph"></label><label>Department<input name="department" value="{{ p['department'] }}" required></label><label>College<input name="college" value="{{ p['college'] }}"></label><label>School / institution<input name="affiliation" value="{{ p['affiliation'] }}"></label><label>Year level<input name="year_level" value="{{ p['year_level'] }}"></label><button class="button" type="submit">Save profile</button></form></details>
+        <details class="action-panel"><summary>Contest</summary><div class="action-popover clean-popover">
+          <form method="post" action="{{ url_for('admin_toggle_registration', aid=p['id']) }}"><button class="tiny wide" type="submit">{{ 'Unregister' if p['registered'] else 'Register' }}</button></form>
+          {% if p['registered'] %}
+          {% if contest['competition_mode']=='team' %}<form method="post" action="{{ url_for('admin_set_participant_team', aid=p['id']) }}" class="form-stack tight"><label>Team<input name="team_name" value="{{ p['team_name'] }}" placeholder="Unassigned"></label><button class="tiny" type="submit">Save team</button></form>{% endif %}
+          <form method="post" action="{{ url_for('v1.participant_status', aid=p['id']) }}" class="form-stack tight"><label>Status<select name="status">{% for status in registration_statuses %}<option value="{{ status }}" {{ 'selected' if p['registration_status']==status else '' }}>{{ status|replace('_',' ')|title }}</option>{% endfor %}</select></label><button class="tiny" type="submit">Update status</button></form>
+          <form method="post" action="{{ url_for('v1.participant_approval', aid=p['id']) }}" class="form-stack tight"><label>Approval<select name="approval_status">{% for a in ['PENDING','APPROVED','REJECTED'] %}<option {{ 'selected' if p['approval_status']==a else '' }}>{{ a }}</option>{% endfor %}</select></label><button class="tiny" type="submit">Save approval</button></form>
+          <form method="post" action="{{ url_for('v1.participant_assignment', aid=p['id']) }}" class="form-stack tight"><div class="form-row"><label>Seat<input name="seat" value="{{ p['seat'] }}"></label><label>Workstation<input name="workstation" value="{{ p['workstation'] }}"></label></div><div class="form-row"><label>Coach<input name="coach_name" value="{{ p['coach_name'] }}"></label><label>Adviser<input name="adviser_name" value="{{ p['adviser_name'] }}"></label></div><label>Staff notes<textarea name="notes" rows="2">{{ p['registration_notes'] }}</textarea></label><button class="tiny" type="submit">Save contest details</button></form>
+          {% endif %}
+        </div></details>
+        <details class="action-panel"><summary>Credentials</summary><div class="action-popover clean-popover"><a class="tiny buttonlike" href="{{ url_for('v1.participant_credential', aid=p['id']) }}">Credential</a><a class="tiny buttonlike" href="{{ url_for('v1.participation_certificate', aid=p['id']) }}">Certificate</a><form method="post" action="{{ url_for('v1.participant_credential_reset', aid=p['id']) }}" onsubmit="return confirm('Reset this contestant password and download a one-time credential sheet?')"><button class="tiny wide" type="submit">Reset + credential</button></form><form method="post" action="{{ url_for('v1.participant_password_reset', aid=p['id']) }}" class="form-stack tight"><label>Temporary password<input type="password" name="password" minlength="6" required></label><button class="tiny" type="submit">Reset password</button></form></div></details>
+        {% if p['registered'] %}<details class="action-panel danger-action"><summary>{{ 'Reinstate' if p['disqualified'] else 'Discipline' }}</summary><div class="action-popover clean-popover">{% if p['disqualified'] %}<form method="post" action="{{ url_for('admin_disqualification', aid=p['id']) }}"><button class="tiny wide" name="action" value="reinstate" type="submit">Reinstate contestant</button></form>{% else %}<form method="post" action="{{ url_for('admin_disqualification', aid=p['id']) }}" class="form-stack tight"><label>Reason<select name="reason" required><option value="">Select reason…</option><option value="Cheating or attempted cheating">Cheating or attempted cheating</option><option value="Submitted solution not produced by the contestant/team">Solution not produced by contestant/team</option><option value="Unauthorized assistance or material">Unauthorized assistance or material</option><option value="Hacking or equipment/network tampering">Hacking or equipment/network tampering</option><option value="Distracting or disruptive behavior">Distracting or disruptive behavior</option><option value="Sportsmanship or fair-competition violation">Sportsmanship violation</option><option value="Other contest-rule violation">Other rule violation</option></select></label><label>Evidence / notes<input name="evidence_notes"></label><button class="tiny danger-inline" name="action" value="disqualify" type="submit">Confirm disqualification</button></form>{% endif %}</div></details>{% endif %}
+        </div>
+      </div>
+    </article>
+  {% else %}<p class="empty">No contestant accounts.</p>{% endfor %}
+  </div>
+</section>
+</div>
+{% endblock %}

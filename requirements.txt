@@ -1,0 +1,7 @@
+Flask==3.1.2
+tzdata>=2025.2
+reportlab>=4.2,<5
+qrcode[pil]>=8.0,<9
+XlsxWriter>=3.2,<4
+gunicorn>=23,<24
+waitress>=3.0,<4

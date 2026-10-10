@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>{% block title %}Inquisitor{% endblock %} · Inquisitor</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon-32x32.png') }}">
+  <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='favicon-16x16.png') }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
+</head>
+<body class="{{ 'is-frozen' if cstate and cstate.phase=='FROZEN' else '' }}">
+<div class="shell">
+  <aside class="sidebar">
+    <a class="brand" href="{{ url_for('index') }}" aria-label="Inquisitor home">
+      <img class="brand-wordmark" src="{{ url_for('static', filename='inquisitor_logo_white.png') }}" alt="Inquisitor">
+    </a>
+
+    <nav aria-label="Primary navigation">
+      {% if me and me['role']=='participant' %}
+        <div class="nav-section">Contestant</div>
+        <a href="{{ url_for('dashboard') }}" class="{{ 'active' if request.endpoint=='dashboard' else '' }}">Dashboard</a>
+        <a href="{{ url_for('problems') }}" class="{{ 'active' if request.endpoint in ['problems','problem'] else '' }}">Problems</a>
+        <a href="{{ url_for('submit') }}" class="{{ 'active' if request.endpoint=='submit' else '' }}">Submit</a>
+        <a href="{{ url_for('submissions') }}" class="{{ 'active' if request.endpoint=='submissions' else '' }}">Submissions</a>
+        <a href="{{ url_for('clarifications') }}" class="{{ 'active' if request.endpoint=='clarifications' else '' }}">Clarifications</a>
+        <a href="{{ url_for('v1.public_announcements') }}" class="{{ 'active' if request.endpoint=='v1.public_announcements' else '' }}">Announcements</a>
+      {% elif me and me['role']=='judge' %}
+        <div class="nav-section">{{ staff_role_label or 'Judge' }}</div>
+        {% if staff_role in ['contest_director','chief_judge','judge','technical_admin'] or not staff_role %}<a href="{{ url_for('judge_console') }}" class="{{ 'active' if request.endpoint=='judge_console' else '' }}">Judge Console</a>{% endif %}
+        {% if staff_role in ['contest_director','chief_judge','judge','technical_admin'] or not staff_role %}<a href="{{ url_for('submissions') }}" class="{{ 'active' if request.endpoint=='submissions' else '' }}">Submissions</a>{% endif %}
+        {% if staff_role in ['contest_director','chief_judge','judge'] or not staff_role %}<a href="{{ url_for('clarifications') }}" class="{{ 'active' if request.endpoint=='clarifications' else '' }}">Clarifications</a>{% endif %}
+        {% if staff_role in ['contest_director','chief_judge','problem_setter'] %}<a href="{{ url_for('admin_problems') }}" class="{{ 'active' if request.endpoint and 'problem' in request.endpoint else '' }}">Problems</a>{% endif %}
+        {% if staff_role in ['contest_director','registration_staff'] %}<a href="{{ url_for('admin_participants') }}" class="{{ 'active' if request.endpoint and 'participant' in request.endpoint else '' }}">Contestants</a>{% endif %}
+        {% if staff_role in ['contest_director','chief_judge','technical_admin'] %}<a href="{{ url_for('v1.operations') }}" class="{{ 'active' if request.endpoint=='v1.operations' else '' }}">Announcements & Control</a>{% endif %}
+        {% if staff_role in ['contest_director','chief_judge'] %}<a href="{{ url_for('v1.awards') }}" class="{{ 'active' if request.endpoint in ['v1.awards','v1.progressive_reveal'] else '' }}">Awards & Balloons</a><a href="{{ url_for('v1.analytics') }}" class="{{ 'active' if request.endpoint=='v1.analytics' else '' }}">Analytics</a>{% endif %}
+        {% if staff_role in ['contest_director','chief_judge'] %}<a href="{{ url_for('v1.similarity_review') }}" class="{{ 'active' if request.endpoint=='v1.similarity_review' else '' }}">Similarity Review</a>{% endif %}
+        {% if staff_role in ['contest_director','technical_admin'] %}<a href="{{ url_for('v1.network_status') }}" class="{{ 'active' if request.endpoint=='v1.network_status' else '' }}">System Status</a><a href="{{ url_for('v1.backups') }}" class="{{ 'active' if request.endpoint=='v1.backups' else '' }}">Backups</a><a href="{{ url_for('admin_api') }}" class="{{ 'active' if request.endpoint in ['admin_api','v1.api_settings'] else '' }}">Contest API</a>{% endif %}
+      {% elif me and me['role']=='admin' %}
+        <div class="nav-section">Contest Director</div>
+        <a href="{{ url_for('admin_dashboard') }}" class="{{ 'active' if request.endpoint=='admin_dashboard' else '' }}">Overview</a>
+        <a href="{{ url_for('admin_contests') }}" class="{{ 'active' if request.endpoint in ['admin_contests','admin_update_contest'] else '' }}">Contests</a>
+        <a href="{{ url_for('admin_problems') }}" class="{{ 'active' if request.endpoint and ('problem' in request.endpoint or request.endpoint.startswith('v1.validate_problem')) else '' }}">Problems</a>
+        <a href="{{ url_for('admin_participants') }}" class="{{ 'active' if request.endpoint and ('participant' in request.endpoint or request.endpoint=='v1.participants_import_csv') else '' }}">Contestants</a>
+        <a href="{{ url_for('v1.institutions') }}" class="{{ 'active' if request.endpoint=='v1.institutions' else '' }}">Institutions</a>
+        <a href="{{ url_for('v1.staff') }}" class="{{ 'active' if request.endpoint=='v1.staff' else '' }}">Staff & Roles</a>
+        <div class="nav-section">Operations</div>
+        <a href="{{ url_for('judge_console') }}" class="{{ 'active' if request.endpoint=='judge_console' else '' }}">Judge Console</a>
+        <a href="{{ url_for('v1.operations') }}" class="{{ 'active' if request.endpoint=='v1.operations' else '' }}">Announcements & Control</a>
+        <a href="{{ url_for('v1.awards') }}" class="{{ 'active' if request.endpoint in ['v1.awards','v1.progressive_reveal'] else '' }}">Awards & Balloons</a>
+        <a href="{{ url_for('v1.analytics') }}" class="{{ 'active' if request.endpoint=='v1.analytics' else '' }}">Analytics</a>
+        <a href="{{ url_for('v1.similarity_review') }}" class="{{ 'active' if request.endpoint=='v1.similarity_review' else '' }}">Similarity Review</a>
+        <a href="{{ url_for('v1.audit_log') }}" class="{{ 'active' if request.endpoint=='v1.audit_log' else '' }}">Audit Log</a>
+        <div class="nav-section">System</div>
+        <a href="{{ url_for('v1.network_status') }}" class="{{ 'active' if request.endpoint=='v1.network_status' else '' }}">System Status</a>
+        <a href="{{ url_for('v1.backups') }}" class="{{ 'active' if request.endpoint=='v1.backups' else '' }}">Backups</a>
+        <a href="{{ url_for('admin_api') }}" class="{{ 'active' if request.endpoint in ['admin_api','v1.api_settings'] else '' }}">Contest API</a>
+      {% endif %}
+
+      <div class="nav-section">Public</div>
+      <a href="{{ url_for('leaderboard') }}" class="{{ 'active' if request.endpoint=='leaderboard' else '' }}">Leaderboard</a>
+      <a href="{{ url_for('contest_info') }}" class="{{ 'active' if request.endpoint=='contest_info' else '' }}">Contest Info</a>
+      <a href="{{ url_for('v1.public_contest_archive') }}" class="{{ 'active' if request.endpoint=='v1.public_contest_archive' else '' }}">Contest Archive</a>
+    </nav>
+
+    <div class="side-footer">
+      <img class="partner-lockup" src="{{ url_for('static', filename='tactics_acpc_lockup.png') }}" alt="TACTICS x ACPC">
+      <span class="side-platform-tagline">The Official Contest Management Platform of TACTICS x ACPC 2026</span>
+      <small>Inquisitor {{ version }} · {{ release_name }}</small>
+    </div>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div class="page-heading"><h1>{% block page_title %}{{ contest['name'] if contest else 'Inquisitor' }}{% endblock %}</h1></div>
+      <div class="top-actions">
+        {% if contest and cstate %}<div class="contest-clock" title="Contest time remaining"><span class="phase {{ cstate.phase|lower|replace(' ','-') }}" id="contest-phase">{{ cstate.phase }}</span><strong id="countdown" class="js-countdown" data-end="{{ cstate.end.isoformat() if cstate.end else '' }}">--:--:--</strong></div>{% endif %}
+        {% if me %}<span class="user-pill"><span>{{ me['display_name'] }}</span><small>{{ staff_role_label if me['role'] in ['admin','judge'] else 'Contestant' }}</small></span><a class="ghost" href="{{ url_for('logout') }}">Sign out</a>{% else %}<a class="ghost" href="{{ url_for('login') }}">Sign in</a>{% endif %}
+      </div>
+    </header>
+
+    {% if contest and contest['emergency_message'] %}<div class="emergency-banner"><strong>Contest notice</strong><span>{{ contest['emergency_message'] }}</span></div>{% endif %}
+    {% with messages=get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-stack">{% for category,message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}</div>{% endif %}{% endwith %}
+
+    <div class="page-content">{% block content %}{% endblock %}</div>
+
+    {% if not me %}
+    <footer class="site-footer" aria-label="Inquisitor partners and contest information">
+      <div class="footer-identity-strip">
+        <section class="footer-identity footer-identity-wide"><img src="{{ url_for('static', filename='footer_ccs.png') }}" class="footer-ccs-logo" alt="College of Computer Studies logo"><div><span class="footer-label">Academic host</span><strong>College of Computer Studies</strong><p>Ateneo de Naga University. The academic host of the Ateneo Computer Programming Competition.</p></div></section>
+        <section class="footer-identity footer-identity-wide"><img src="{{ url_for('static', filename='footer_dcs.png') }}" alt="Department of Computer Science logo"><div><span class="footer-label">Department organizer</span><strong>Department of Computer Science</strong><p>Department organizer of ACPC since its conception, responsible for the contest’s academic direction and programming competition design.</p></div></section>
+        <section class="footer-identity footer-identity-wide"><img src="{{ url_for('static', filename='footer_tactics.png') }}" alt="TACTICS logo"><div><span class="footer-label">Student manpower</span><strong>TACTICS</strong><p>The student organization of the Department of Computer Science and the primary manpower behind contest operations, logistics, and contestant support.</p></div></section>
+      </div>
+      <div class="footer-contest-row">
+        <div>
+          <span class="footer-label">Active competition</span>
+          <strong>{{ contest['name'] if contest else 'Ateneo Computer Programming Competition 2026' }}</strong>
+          <p>{% if contest %}{{ contest['location'] or 'Ateneo de Naga University' }} · {{ contest['scope']|replace('_',' ')|title }} · {{ 'Team' if contest['competition_mode']=='team' else 'Individual' }}{% else %}Contest details will appear here once an active contest is configured.{% endif %}</p>
+          <p>Contest Director: Ian Peter L. Lastimosa · Chief Judge: The contest is on auto-judge mode.</p>
+        </div>
+        <div class="footer-edition"><span>TACTICS x ACPC</span><strong>2026</strong></div>
+      </div>
+      <div class="footer-bottom"><span>Inquisitor {{ version }} · {{ release_name }}</span><span>Built for TACTICS x ACPC and future programming competitions.</span></div>
+    </footer>
+    {% endif %}
+  </main>
+</div>
+<script>window.INQUISITOR_CSRF={{ csrf_token|tojson }};</script>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

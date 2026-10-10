@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+{% block title %}Sign in{% endblock %}
+{% block page_title %}Sign in{% endblock %}
+{% block content %}
+<section class="card auth-card">
+  <div class="login-brand">
+    <img class="login-logo login-wordmark" src="{{ url_for('static', filename='inquisitor_logo_white.png') }}" alt="Inquisitor">
+
+  </div>
+  <form method="post" class="form-stack">
+    <label>Username or email<input name="username" autocomplete="username" autofocus required></label>
+    <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+    <button class="button wide" type="submit">Sign in</button>
+  </form>
+  {% if contest and contest['signup_open'] %}
+    <p class="auth-switch">Competing in ACPC? <a href="{{ url_for('signup') }}">Create a contestant account</a></p>
+  {% endif %}
+  <details class="demo-details"><summary>Local demo accounts</summary><div>Contestant: <span class="kbd">contestant / inquisitor</span><br>Judge: <span class="kbd">judge / inquisitor</span><br>Contest Director: <span class="kbd">admin / inquisitor</span></div></details>
+  <div class="auth-platform-tagline">The Official Contest Management Platform of TACTICS x ACPC 2026</div>
+</section>
+{% endblock %}

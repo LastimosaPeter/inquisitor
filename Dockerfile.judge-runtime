@@ -1,0 +1,8 @@
+FROM ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash coreutils gcc g++ openjdk-21-jdk-headless python3 ruby-full rustc kotlin \
+    && rm -rf /var/lib/apt/lists/*
+RUN useradd --uid 65534 --non-unique --no-create-home --shell /usr/sbin/nologin sandbox || true
+WORKDIR /work
+CMD ["bash"]

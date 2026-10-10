@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+{% block title %}Contestant sign up{% endblock %}
+{% block page_title %}Contestant Registration{% endblock %}
+{% block content %}
+<section class="card auth-card auth-card-wide">
+  <div class="login-brand signup-brand"><img class="login-logo login-wordmark signup-wordmark" src="{{ url_for('static', filename='inquisitor_logo_white.png') }}" alt="Inquisitor"></div>
+  {% if registration_closed %}<div class="notice"><strong>Registration is currently closed.</strong><br>Registration may be outside its configured window or closed by the Contest Director.</div><a class="ghost buttonlike" href="{{ url_for('login') }}">Back to sign in</a>
+  {% else %}
+    {% if contest['eligibility_note'] %}<div class="notice"><strong>Eligibility</strong><br>{{ contest['eligibility_note'] }}</div>{% endif %}
+    {% if contest['registration_instruction'] %}<p class="muted">{{ contest['registration_instruction'] }}</p>{% endif %}
+    <form method="post" class="form-stack">
+      <div class="form-row"><label>Full name<input name="display_name" value="{{ request.form.get('display_name','') }}" autocomplete="name" required></label><label>Department / program<input name="department" value="{{ request.form.get('department','') }}" placeholder="Computer Science" required></label></div>
+      <div class="form-row"><label>College<input name="college" value="{{ request.form.get('college','') }}" placeholder="College of Computer Studies"></label><label>Year level<input name="year_level" value="{{ request.form.get('year_level','') }}" placeholder="3rd Year"></label></div>
+      <label>School / institution<input name="affiliation" value="{{ request.form.get('affiliation','Ateneo de Naga University') }}" list="institution-list" autocomplete="organization"><datalist id="institution-list">{% for i in institutions %}<option value="{{ i['name'] }}">{% endfor %}</datalist></label>
+      {% if contest['competition_mode']=='team' %}<label>Team name<input name="team_name" value="{{ request.form.get('team_name','') }}" placeholder="Use the exact same name as your teammates"><small class="muted">Maximum {{ contest['max_team_size'] }} members. Matching team names share one leaderboard row.</small></label>{% endif %}
+      <div class="form-row"><label>Coach <small class="muted">Optional</small><input name="coach_name" value="{{ request.form.get('coach_name','') }}"></label><label>Adviser <small class="muted">Optional</small><input name="adviser_name" value="{{ request.form.get('adviser_name','') }}"></label></div>
+      <div class="form-row"><label>Username<input name="username" value="{{ request.form.get('username','') }}" autocomplete="username" required><small class="muted">3-32 lowercase letters, numbers, period, underscore, or hyphen.</small></label><label>Email <small class="muted">Optional; ADNU email-ready</small><input type="email" name="email" value="{{ request.form.get('email','') }}" autocomplete="email" placeholder="name@adnu.edu.ph"></label></div>
+      <div class="form-row"><label>Password<input name="password" type="password" autocomplete="new-password" minlength="6" required></label><label>Confirm password<input name="confirm_password" type="password" autocomplete="new-password" minlength="6" required></label></div>
+      {% if contest['requires_approval'] %}<div class="notice subtle">Your account will be created in <strong>Pending Approval</strong> status until contest staff approve it.</div>{% endif %}
+      <button class="button wide" type="submit">Submit registration</button>
+    </form><p class="auth-switch">Already registered? <a href="{{ url_for('login') }}">Sign in</a></p>
+  {% endif %}
+  <div class="auth-platform-tagline">The Official Contest Management Platform of TACTICS x ACPC 2026</div>
+</section>
+{% endblock %}

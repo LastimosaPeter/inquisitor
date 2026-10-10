@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+{% block title %}{{ p['code'] }} · {{ p['title'] }}{% endblock %}
+{% block page_title %}{{ p['code'] }} · {{ p['title'] }}{% endblock %}
+{% block content %}
+<div class="grid two-one">
+  <section class="card statement problem-statement-accent" style="--problem-color: {{ p['color'] }}">
+    <div class="meta-row"><span>Time {{ (p['time_limit_ms']/1000)|round(3) }} s</span><span>Memory {{ p['memory_limit_mb'] }} MiB</span><span>Code {{ p['code_limit_kb'] }} KiB</span></div>
+    {% if p['contributors'] %}
+      {% set contributor_count = p['contributors'].split(';')|length %}
+      <p class="problem-byline"><span>{{ 'Contributors' if contributor_count > 1 else 'Author / Contributor' }}</span> {{ p['contributors'] }}</p>
+    {% endif %}
+    <p>{{ p['statement'] }}</p>
+    {% if p['sample_input'] or p['sample_output'] %}
+      <div class="grid two-one"><div><span class="eyebrow">Sample input</span><pre>{{ p['sample_input'] }}</pre></div><div><span class="eyebrow">Sample output</span><pre>{{ p['sample_output'] }}</pre></div></div>
+    {% endif %}
+  </section>
+  <aside class="card sticky-card"><span class="eyebrow">Submit</span><h2>Problem {{ p['code'] }}</h2><p class="muted">Accepted languages: Rust, Ruby, Java, Kotlin, Python 3, C, and C++.</p><a class="button wide" href="{{ url_for('submit', problem=p['code']) }}">Submit solution</a></aside>
+</div>
+{% endblock %}

@@ -1,0 +1,4 @@
+{$INQUISITOR_DOMAIN:localhost} {
+    encode zstd gzip
+    reverse_proxy web:8000
+}

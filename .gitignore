@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+inquisitor.db
+.env
+.DS_Store
+problems/
+backups/
+judge-work/
+*.db-shm
+*.db-wal

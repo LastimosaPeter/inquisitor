@@ -1,0 +1,54 @@
+{% extends 'base.html' %}
+{% block title %}Clarifications{% endblock %}
+{% block page_title %}Clarifications{% endblock %}
+{% block content %}
+{% if me['role']=='participant' %}
+  {% if broadcasts %}
+  <section class="card official-clarifications">
+    <div class="card-head"><div><span class="eyebrow">Official clarifications</span><h2>Broadcasts from the judges</h2></div><span class="badge warn">All contestants</span></div>
+    {% for c in broadcasts %}
+      <div class="official-clarification-row">
+        <div class="clarification-meta"><span class="badge neutral">{{ c['code'] or 'General' }}</span>{% if c['request_type'] in ['AMBIGUITY','ERROR'] %}<span class="badge warn">{{ 'Ambiguity' if c['request_type']=='AMBIGUITY' else 'Statement error' }}</span>{% endif %}</div>
+        <strong>{{ c['answer'] }}</strong>
+      </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  <div class="grid two-one messages-layout">
+    <section class="card small-form">
+      <span class="eyebrow">Clarification request</span><h2>Ask the judges</h2>
+      <form method="post" class="form-stack">
+        <label>Request type
+          <select name="request_type" id="clarification-type">
+            <option value="QUESTION">General question</option>
+            <option value="AMBIGUITY">Claim of ambiguity</option>
+            <option value="ERROR">Possible statement error</option>
+          </select>
+        </label>
+        <label>Problem
+          <select name="problem" id="clarification-problem"><option value="">General contest question</option>{% for p in problems %}<option value="{{ p['code'] }}">{{ p['code'] }} · {{ p['title'] }}</option>{% endfor %}</select>
+          <small class="muted">A problem is required for ambiguity and statement-error claims.</small>
+        </label>
+        <label>Request<textarea name="question" rows="5" required placeholder="Describe the ambiguity, possible error, or question clearly."></textarea></label>
+        <button class="button" type="submit">Submit clarification request</button>
+      </form>
+    </section>
+    <aside class="card message-help"><span class="eyebrow">Contest procedure</span><h2>Private request, public correction when needed</h2><p class="muted">Your request is private by default. If the judges agree that a problem statement contains an ambiguity or error, they can issue an official clarification to every contestant or team.</p></aside>
+  </div>
+{% endif %}
+
+<section class="card message-history {{ 'message-history-judge' if me['role']!='participant' else '' }}">
+  <div class="card-head"><div><span class="eyebrow">Inbox</span><h2>{{ 'Your requests' if me['role']=='participant' else 'Clarification requests' }}</h2></div></div>
+  {% for c in rows %}
+    <div class="message-thread">
+      <div class="message-thread-head">
+        <div><strong>#{{ c['id'] }} · {{ c['code'] or 'General' }}{% if me['role']!='participant' %} · {{ c['participant_name'] }}{% endif %}</strong><div class="clarification-meta"><span class="badge neutral">{{ {'QUESTION':'Question','AMBIGUITY':'Ambiguity','ERROR':'Statement error'}.get(c['request_type'],'Question') }}</span>{% if c['broadcast'] %}<span class="badge warn">Broadcast</span>{% endif %}</div></div>
+        <span class="badge {{ 'warn' if c['status']=='OPEN' else 'ok' }}">{{ 'Awaiting judge' if c['status']=='OPEN' else 'Resolved' }}</span>
+      </div>
+      <div class="message-bubble contestant-message">{{ c['question'] }}</div>
+      {% if c['answer'] %}<div class="message-bubble judge-message"><span>{{ 'Official clarification' if c['broadcast'] else 'Judge reply' }}</span>{{ c['answer'] }}</div>{% endif %}
+    </div>
+  {% else %}<p class="muted">No clarification requests yet.</p>{% endfor %}
+</section>
+{% endblock %}

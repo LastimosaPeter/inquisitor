@@ -1,0 +1,78 @@
+{% extends 'base.html' %}
+{% block title %}Leaderboard{% endblock %}
+{% block page_title %}Leaderboard{% endblock %}
+{% block content %}
+<div class="leaderboard-stack">
+  {% if frozen %}
+  <div class="freeze-banner">
+    <div class="freeze-lock">⌛</div>
+    <div><h2>SCOREBOARD FROZEN</h2><p>Public ranking changes are hidden, but submissions and judging continue normally.</p></div>
+    <div class="freeze-time"><span>Contest time left</span><strong class="js-countdown" data-end="{{ cstate.end.isoformat() if cstate and cstate.end else '' }}">--:--:--</strong></div>
+  </div>
+  {% endif %}
+
+  <section class="card scoreboard-card">
+    <div class="card-head">
+      <div><span class="eyebrow">{{ 'ICPC-style team standings' if contest['competition_mode']=='team' else 'Individual standings' }}</span><h2>{{ contest['name'] }}</h2></div>
+      <div class="row-actions"><a class="tiny buttonlike" href="{{ url_for('v1.scoreboard_mode',mode='projector') }}" target="_blank">Projector</a></div>
+    </div>
+    <div class="table-wrap">
+      <table class="scoreboard">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>{{ 'Team' if contest['competition_mode']=='team' else 'Participant' }}</th>
+            <th>{{ 'Points' if contest['scoring_model'] in ['points','custom'] else 'Solved' }}</th><th>Penalty</th>
+            {% for p in problems %}
+              <th class="problem-col-head"><span class="problem-head-code" style="--problem-color: {{ p['color'] }}">{{ p['code'] }}</span></th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          {% set podium = 'podium-gold' if r.rank==1 and not r.disqualified else ('podium-silver' if r.rank==2 and not r.disqualified else ('podium-bronze' if r.rank==3 and not r.disqualified else '')) %}
+          <tr class="{{ 'disqualified-row' if r.disqualified else podium }}">
+            <td class="rank">
+              {% if r.disqualified %}
+                DQ
+              {% elif r.rank in [1,2,3] %}
+                <span class="rank-medal rank-{{ r.rank }}">{{ r.rank }}</span>
+              {% else %}
+                {{ r.rank }}
+              {% endif %}
+            </td>
+            <td class="score-identity">
+              <strong>{{ r.participant['display_name'] }}</strong>
+              <div class="identity-meta">
+                {% if r.participant.get('departments') %}
+                  {% for dept in r.participant['departments'] %}<span class="department-chip">{{ dept }}</span>{% endfor %}
+                {% elif r.participant.get('department') %}
+                  <span class="department-chip">{{ r.participant['department'] }}</span>
+                {% endif %}
+                {% if r.participant['affiliation'] %}<span class="affiliation-text">{{ r.participant['affiliation'] }}</span>{% endif %}
+              </div>
+              {% if contest['competition_mode']=='team' %}<small class="team-members">{{ r.participant['members']|join(' · ') }}</small>{% endif %}
+              {% if r.disqualified %}<small class="dq-reason">Disqualified{% if r.participant['disqualification_reason'] %}: {{ r.participant['disqualification_reason'] }}{% endif %}</small>{% endif %}
+            </td>
+            <td class="big-num">{{ '—' if r.disqualified else (r.points|round(1) if contest['scoring_model'] in ['points','custom'] else r.solved) }}</td>
+            <td>{{ '—' if r.disqualified else r.penalty }}</td>
+            {% for p in problems %}
+              {% set c=r.cells[p['api_id']] %}
+              <td>
+                <div class="score-cell {{ 'first-solve' if c.first_to_solve and not r.disqualified else ('solved' if c.status=='AC' and not r.disqualified else ('failed' if c.status=='WA' and not r.disqualified else '')) }}" style="--problem-color: {{ p['color'] }}">
+                  {% if r.disqualified %}—
+                  {% elif c.status=='AC' %}✓ {{ c.minute }}{% if c.wrong %}<small>+{{ c.wrong }}</small>{% endif %}{% if c.first_to_solve %}<span class="first-solve-mark" title="First to solve">FTS</span>{% endif %}
+                  {% elif c.status=='WA' %}× {{ c.wrong }}
+                  {% else %}—{% endif %}
+                </div>
+              </td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="scoreboard-note">Format: {{ 'Team / ICPC-style' if contest['competition_mode']=='team' else 'Individual' }} · Scoring: {{ contest['scoring_model']|upper }}</p>
+  </section>
+</div>
+{% endblock %}

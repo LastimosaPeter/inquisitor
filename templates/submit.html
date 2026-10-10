@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{% block title %}Submit{% endblock %}
+{% block page_title %}Submit Solution{% endblock %}
+{% block content %}
+<div class="grid two-one submit-layout">
+  <section class="card submit-card">
+    <form method="post" enctype="multipart/form-data" class="form-stack" id="submission-form">
+      <div class="form-row submit-form-row">
+        <label>Problem
+          <select name="problem" class="select-strong">
+            {% for p in problems %}<option value="{{ p['code'] }}" {{ 'selected' if p['code']==selected else '' }}>{{ p['code'] }} · {{ p['title'] }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>Language
+          <select name="language" id="submission-language" class="select-strong">
+            {% for key,lang in languages.items() %}<option value="{{ key }}">{{ lang.label }}</option>{% endfor %}
+          </select>
+          <small class="muted" id="language-detection-note">Selecting a source file will automatically detect the language when its extension is recognized.</small>
+        </label>
+      </div>
+      <label>Upload source file
+        <input type="file" name="source_file" id="source-file" accept=".rs,.rb,.java,.kt,.py,.c,.cpp,.cc,.cxx">
+      </label>
+      <div class="or">or paste source below</div>
+      <label>Source code<textarea class="code-editor compact-code" name="source" spellcheck="false"></textarea></label>
+      <button class="button" type="submit">Submit for judging</button>
+    </form>
+  </section>
+  <aside class="card sticky-card detection-card">
+    <span class="eyebrow">Supported languages</span>
+    <h2>Automatic File Detection</h2>
+    <p class="muted">Inquisitor recognizes common source extensions and selects the matching judge language automatically.</p>
+    <div class="language-list compact-language-list improved-language-list">
+      {% for key,lang in languages.items() %}<span><strong>{{ lang.label }}</strong><small>{{ lang.extension }}{% for alias in lang.aliases %}, {{ alias }}{% endfor %}</small></span>{% endfor %}
+    </div>
+    <div class="notice subtle"><strong>Auto-detect supported:</strong> uploading a file such as <code>.cpp</code>, <code>.py</code>, or <code>.java</code> will preselect the expected language automatically.</div>
+  </aside>
+</div>
+{% endblock %}
