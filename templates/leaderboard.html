@@ -30,12 +30,13 @@
         </thead>
         <tbody>
           {% for r in rows %}
-          {% set podium = 'podium-gold' if r.rank==1 and not r.disqualified else ('podium-silver' if r.rank==2 and not r.disqualified else ('podium-bronze' if r.rank==3 and not r.disqualified else '')) %}
+          {% set scored = (r.points > 0) if contest['scoring_model'] in ['points','custom'] else (r.solved > 0) %}
+          {% set podium = 'podium-gold' if r.rank==1 and scored and not r.disqualified else ('podium-silver' if r.rank==2 and scored and not r.disqualified else ('podium-bronze' if r.rank==3 and scored and not r.disqualified else '')) %}
           <tr class="{{ 'disqualified-row' if r.disqualified else podium }}">
             <td class="rank">
               {% if r.disqualified %}
                 DQ
-              {% elif r.rank in [1,2,3] %}
+              {% elif r.rank in [1,2,3] and scored %}
                 <span class="rank-medal rank-{{ r.rank }}">{{ r.rank }}</span>
               {% else %}
                 {{ r.rank }}
