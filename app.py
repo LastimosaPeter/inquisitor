@@ -886,7 +886,7 @@ def standings(contest, cutoff: datetime | None = None):
                 if sub["verdict"] == "AC":
                     accepted = sub
                     break
-                if sub["verdict"] in {"WA", "TLE", "RTE"}:
+                if sub["verdict"] in {"WA", "TLE", "RTE", "OLE", "MLE"}:
                     wrong += 1
             problem_points = float(p["points"] if "points" in p.keys() else 100)
             if accepted:
@@ -2515,6 +2515,12 @@ def judging_worker():
 
 
 def start_worker():
+    # A crash mid-judging leaves rows stuck in JUDGING; put them back in the queue.
+    conn = db_connect()
+    try:
+        conn.execute("UPDATE submissions SET status='PENDING' WHERE status='JUDGING'"); conn.commit()
+    finally:
+        conn.close()
     threading.Thread(target=judging_worker,name="inquisitor-judge",daemon=True).start()
 
 
