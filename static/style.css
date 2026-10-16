@@ -227,3 +227,16 @@ main{padding-top:26px}.topbar{padding-bottom:18px;margin-bottom:24px}.topbar:aft
 /* v1.0.7 simple sidebar platform tagline */
 .side-platform-tagline{display:block!important;white-space:normal!important;color:#929ca5;font-size:9px!important;line-height:1.45!important;letter-spacing:0!important;margin-top:2px;max-width:240px;text-indent:0!important;padding-left:0!important}
 .side-platform-tagline strong,.side-platform-tagline span{display:inline!important;margin:0!important;padding:0!important;color:inherit!important;font:inherit!important}
+
+
+/* v1.0.9 small-screen refinement: keep wide tables inside the viewport and
+   shrink the sidebar to a compact header (later rules had re-enabled the footer). */
+@media(max-width:760px){
+  html,body{overflow-x:hidden}
+  main,.card,.table-wrap{min-width:0;max-width:100%}
+  .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .sidebar .side-footer{display:none}
+  .brand{min-height:0;padding:6px 8px 8px}
+  .brand-mark-img{display:block;height:34px}
+  .scoreboard td.score-identity{min-width:150px}
+}
