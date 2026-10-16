@@ -240,3 +240,9 @@ main{padding-top:26px}.topbar{padding-bottom:18px;margin-bottom:24px}.topbar:aft
   .brand-mark-img{display:block;height:34px}
   .scoreboard td.score-identity{min-width:150px}
 }
+
+/* v1.0.9 code review view */
+.code-view{margin:12px 0 0;padding:14px 16px;background:var(--bg);border:1px solid var(--line);border-radius:var(--radius);font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text);overflow:auto;max-height:68vh;white-space:pre;tab-size:4}
+.compare-table td{vertical-align:top;width:50%;padding:0 10px}
+.compare-table pre{margin:0;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
+.compare-table tr.diff td{background:rgba(217,180,95,.12)}

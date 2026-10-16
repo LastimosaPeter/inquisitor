@@ -1,0 +1,49 @@
+{% extends 'base.html' %}
+{% block title %}Review #{{ sub['id'] }}{% endblock %}
+{% block page_title %}Code Review · #{{ sub['id'] }}{% endblock %}
+{% block content %}
+<div class="grid two-one">
+  <section class="card">
+    <div class="card-head">
+      <div><span class="eyebrow">{{ sub['participant_name'] }}{% if sub['participant_affiliation'] %} · {{ sub['participant_affiliation'] }}{% endif %}</span>
+        <h2>Problem {{ sub['code'] }} · {{ sub['title'] }}</h2></div>
+      <a class="tiny buttonlike" href="{{ url_for('judge_console') }}">Back to queue</a>
+    </div>
+    <p class="muted">{{ language.label if language else sub['language'] }} · submitted {{ sub['submitted_at'] }}
+      · auto-judge verdict
+      {% if sub['verdict'] %}<span class="badge {{ 'ok' if (sub['auto_verdict'] or sub['verdict'])=='AC' else 'bad' }}">{{ sub['auto_verdict'] or sub['verdict'] }}</span>{% else %}<span class="badge warn">{{ sub['status'] }}</span>{% endif %}
+      {% if sub['runtime_ms'] is not none %}· {{ sub['runtime_ms'] }} ms{% endif %}</p>
+    {% if sub['manual_override'] %}<div class="notice"><strong>Verdict overridden by {{ sub['reviewed_by_name'] }}:</strong> {{ sub['auto_verdict'] }} → {{ sub['verdict'] }}. {{ sub['review_note'] }}</div>{% endif %}
+    <pre class="code-view" tabindex="0">{{ sub['source'] }}</pre>
+    {% if sub['detail'] %}<details class="profile-details"><summary>Auto-judge detail</summary><pre class="code-view">{{ sub['detail'] }}</pre></details>{% endif %}
+  </section>
+  <aside class="stack">
+    <section class="card">
+      <span class="eyebrow">Code review</span><h2>
+        {% if state=='REVIEWED' %}Reviewed{% elif mine %}Locked to you{% elif state=='CLAIMED' %}Locked{% else %}Open{% endif %}</h2>
+      {% if state=='REVIEWED' %}
+        <p class="muted">Reviewed by <strong>{{ sub['reviewed_by_name'] }}</strong> on {{ sub['reviewed_at'] }}.</p>
+        {% if sub['review_note'] %}<p>{{ sub['review_note'] }}</p>{% endif %}
+      {% elif mine %}
+        <p class="muted">Nobody else can review or change this submission while you hold it. The claim is released automatically after {{ claim_minutes }} minutes without activity.</p>
+        <form method="post" action="{{ url_for('review_complete', sid=sub['id']) }}" class="form-stack">
+          <label>Verdict<select name="verdict"><option value="">Keep auto-judge verdict ({{ sub['verdict'] or '—' }})</option>
+            {% for v in verdicts %}{% if v != sub['verdict'] %}<option value="{{ v }}">Change to {{ v }}</option>{% endif %}{% endfor %}</select></label>
+          <label>Runtime override (ms, optional)<input type="number" name="runtime_ms" min="0" placeholder="Only used if you change the verdict"></label>
+          <label>Review note<textarea name="note" rows="4" placeholder="What did you check? Required if you change the verdict."></textarea></label>
+          <button class="button" type="submit">Finish review</button>
+        </form>
+        <form method="post" action="{{ url_for('review_release', sid=sub['id']) }}" style="margin-top:8px"><button class="tiny" type="submit">Release without reviewing</button></form>
+      {% elif state=='CLAIMED' %}
+        <p class="muted">Being reviewed by <strong>{{ sub['claimed_by_name'] }}</strong>. You can read the code, but not change it.</p>
+        {% if can_force %}<form method="post" action="{{ url_for('review_release', sid=sub['id']) }}"><button class="tiny" type="submit">Force release</button></form>{% endif %}
+      {% else %}
+        {% if sub['status']!='DONE' %}<p class="muted">Still being auto-judged. Review is available once a verdict is in.</p>
+        {% elif my_other_claim %}<p class="muted">You are already reviewing submission <a class="text-link" href="{{ url_for('review_submission', sid=my_other_claim['id']) }}">#{{ my_other_claim['id'] }}</a>. Finish or release it first.</p>
+        {% else %}<p class="muted">Claim this submission to lock it to you while you read the code.</p>
+        <form method="post" action="{{ url_for('review_claim', sid=sub['id']) }}"><button class="button" type="submit">Claim for review</button></form>{% endif %}
+      {% endif %}
+    </section>
+  </aside>
+</div>
+{% endblock %}

@@ -8,13 +8,35 @@
   <div class="stat card"><span>Submissions</span><strong>{{ stats.submissions }}</strong><small>received</small></div>
   <div class="stat card"><span>Clarifications</span><strong>{{ stats.clarifications }}</strong><small>awaiting reply</small></div>
 </div>
-<div class="notice subtle"><strong>Auto-judge mode is active.</strong> The Contest Director may still manually override any verdict below and is treated as the acting Chief Judge for manual review.</div>
+<div class="notice subtle"><strong>Auto-judge mode is active.</strong> Verdicts come from program output. Judges can claim a submission to read its code; a claimed submission is locked to that judge, and a judge can hold one claim at a time.</div>
 <div class="grid judge-grid">
   <section class="card">
     <div class="card-head"><div><span class="eyebrow">Live queue</span><h2>Submissions</h2></div><span class="badge live">Judge active</span></div>
-    <div class="table-wrap"><table><thead><tr><th>ID</th><th>Contestant</th><th>P</th><th>Language</th><th>Status</th><th>Verdict</th><th>Runtime</th><th>Actions</th></tr></thead><tbody>
-    {% for s in queue %}{% set lang = judge_languages.get(s['language']) %}<tr><td>#{{ s['id'] }}</td><td>{{ s['participant_name'] }}</td><td>{{ s['code'] }}</td><td>{{ lang.label if lang else s['language'] }}</td><td><span class="badge {{ 'warn' if s['status']!='DONE' else 'neutral' }}">{{ s['status'] }}</span></td><td>{% if s['verdict'] %}<span class="badge {{ 'ok' if s['verdict']=='AC' else 'bad' }}">{{ s['verdict'] }}</span>{% else %}—{% endif %}</td><td>{{ (s['runtime_ms'] ~ ' ms') if s['runtime_ms'] is not none else '—' }}</td><td><div class="inline-actions"><form method="post" action="{{ url_for('rejudge', sid=s['id']) }}"><button class="tiny" type="submit">Rejudge</button></form><details class="profile-details"><summary>Manual judge</summary><form method="post" action="{{ url_for('manual_judge', sid=s['id']) }}" class="profile-form manual-judge-form"><label>Verdict<select name="verdict" required><option value="AC">Accepted</option><option value="WA">Wrong Answer</option><option value="TLE">Time Limit Exceeded</option><option value="RTE">Runtime Error</option><option value="CE">Compilation Error</option><option value="MLE">Memory Limit Exceeded</option><option value="OLE">Output Limit Exceeded</option><option value="PE">Presentation Error</option></select></label><label>Runtime (ms)<input type="number" name="runtime_ms" min="0" placeholder="Optional"></label><label>Judge notes<textarea name="detail" rows="3" placeholder="Manual override or chief-judge remarks"></textarea></label><button class="button" type="submit">Apply verdict</button></form></details></div></td></tr>{% else %}<tr><td colspan="8" class="empty">No submissions.</td></tr>{% endfor %}
+    {% if my_claim %}<div class="notice"><strong>Your current review:</strong> submission #{{ my_claim['id'] }} ({{ my_claim['participant_name'] }}, problem {{ my_claim['code'] }}). Finish or release it before claiming another. <a class="text-link" href="{{ url_for('review_submission', sid=my_claim['id']) }}">Continue review</a></div>{% endif %}
+    <form method="get" class="inline-team-form" style="margin:10px 0">
+      <select name="show">{% for key,label in [('all','All submissions'),('unreviewed','Awaiting code review'),('claimed','Being reviewed now'),('mine','Mine'),('overridden','Manually overridden'),('pending','Still judging')] %}<option value="{{ key }}" {{ 'selected' if show==key }}>{{ label }}</option>{% endfor %}</select>
+      <select name="problem"><option value="">All problems</option>{% for c in problem_codes %}<option value="{{ c }}" {{ 'selected' if prob==c }}>{{ c }}</option>{% endfor %}</select>
+      <input type="search" name="q" value="{{ q }}" placeholder="Contestant name">
+      <button class="tiny" type="submit">Filter</button>
+    </form>
+    <div class="table-wrap"><table><thead><tr><th>ID</th><th>Contestant</th><th>P</th><th>Language</th><th>Status</th><th>Verdict</th><th>Runtime</th><th>Code review</th><th></th></tr></thead><tbody>
+    {% for s in queue %}{% set lang = judge_languages.get(s['language']) %}
+    <tr>
+      <td>#{{ s['id'] }}</td><td>{{ s['participant_name'] }}</td><td>{{ s['code'] }}</td><td>{{ lang.label if lang else s['language'] }}</td>
+      <td><span class="badge {{ 'warn' if s['status']!='DONE' else 'neutral' }}">{{ s['status'] }}</span></td>
+      <td>{% if s['verdict'] %}<span class="badge {{ 'ok' if s['verdict']=='AC' else 'bad' }}">{{ s['verdict'] }}</span>{% if s['manual_override'] %} <span class="badge neutral" title="Auto-judge said {{ s['auto_verdict'] }}">manual</span>{% endif %}{% else %}—{% endif %}</td>
+      <td>{{ (s['runtime_ms'] ~ ' ms') if s['runtime_ms'] is not none else '—' }}</td>
+      <td>{% if s['reviewed_at'] %}<span class="badge ok">Reviewed</span> <small>{{ s['reviewed_by_name'] }}</small>
+          {% elif s['claimed_by'] and s['claimed_at'] and s['claimed_at'] >= cutoff %}<span class="badge warn">Locked</span> <small>{{ s['claimed_by_name'] }}</small>
+          {% elif s['status']=='DONE' %}<span class="muted">Unreviewed</span>{% else %}—{% endif %}</td>
+      <td><div class="inline-actions"><a class="tiny buttonlike" href="{{ url_for('review_submission', sid=s['id']) }}">{{ 'View' if s['reviewed_at'] else 'Review' }}</a>
+        <form method="post" action="{{ url_for('rejudge', sid=s['id']) }}"><button class="tiny" type="submit" title="Run the auto-judge again (clears any manual verdict)">Rejudge</button></form></div></td>
+    </tr>
+    {% else %}<tr><td colspan="9" class="empty">No submissions match.</td></tr>{% endfor %}
     </tbody></table></div>
+    {% if pages > 1 %}<div class="row-actions" style="margin-top:10px"><span class="muted">Page {{ page }} of {{ pages }} · {{ total_rows }} submissions</span>
+      {% if page > 1 %}<a class="tiny buttonlike" href="{{ url_for('judge_console', show=show, problem=prob, q=q, page=page-1) }}">Previous</a>{% endif %}
+      {% if page < pages %}<a class="tiny buttonlike" href="{{ url_for('judge_console', show=show, problem=prob, q=q, page=page+1) }}">Next</a>{% endif %}</div>{% endif %}
   </section>
   <aside class="stack">
     <section class="card"><span class="eyebrow">Worker health</span><h2>Local runtimes</h2>{% for key,lang in judge_languages.items() %}<div class="health-row"><span>{{ lang.label }}</span><span class="badge {{ 'ok' if judge_compiler_status.get(key, False) else 'bad' }}">{{ 'Ready' if judge_compiler_status.get(key, False) else 'Missing' }}</span></div>{% endfor %}<p class="muted tiny-text">Install the missing compiler/runtime on the local judge machine before accepting that language.</p></section>

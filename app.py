@@ -24,7 +24,7 @@ from flask import (
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from judge import LANGUAGES, compiler_status, detect_language_from_filename, judge_submission
+from judge import LANGUAGES, compiler_status, detect_language_from_filename, judge_backend, judge_submission
 import features_v1 as fx
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -1328,12 +1328,28 @@ def judge_console():
         "clarifications": conn.execute("SELECT COUNT(*) FROM clarifications WHERE contest_id=? AND status='OPEN'", (contest["id"],)).fetchone()[0],
         "submissions": conn.execute("SELECT COUNT(*) FROM submissions WHERE contest_id=?", (contest["id"],)).fetchone()[0],
     }
+    me = current_user(); cutoff = _claim_cutoff(); page_size = 40
+    show = request.args.get("show", "all"); prob = request.args.get("problem", "").strip().upper(); q = request.args.get("q", "").strip()
+    try: page = max(1, int(request.args.get("page", "1")))
+    except ValueError: page = 1
+    where = ["s.contest_id=?"]; args = [contest["id"]]
+    if show == "unreviewed": where.append("s.reviewed_at IS NULL AND s.status='DONE'")
+    elif show == "claimed": where.append("s.reviewed_at IS NULL AND s.claimed_by IS NOT NULL AND s.claimed_at>=?"); args.append(cutoff)
+    elif show == "mine": where.append("s.claimed_by=?"); args.append(me["id"])
+    elif show == "overridden": where.append("s.manual_override=1")
+    elif show == "pending": where.append("s.status!='DONE'")
+    else: show = "all"
+    if prob: where.append("p.code=?"); args.append(prob)
+    if q: where.append("(a.display_name LIKE ? OR a.username LIKE ?)"); args += [f"%{q}%", f"%{q}%"]
+    base = "FROM submissions s JOIN accounts a ON a.id=s.account_id JOIN problems p ON p.id=s.problem_id WHERE " + " AND ".join(where)
+    total_rows = conn.execute("SELECT COUNT(*) " + base, args).fetchone()[0]
     queue = conn.execute(
-        """SELECT s.*, a.display_name participant_name, p.code, p.title FROM submissions s
-           JOIN accounts a ON a.id=s.account_id JOIN problems p ON p.id=s.problem_id
-           WHERE s.contest_id=? ORDER BY CASE s.status WHEN 'JUDGING' THEN 0 WHEN 'PENDING' THEN 1 ELSE 2 END, s.id DESC LIMIT 60""",
-        (contest["id"],)
-    ).fetchall()
+        "SELECT s.*, a.display_name participant_name, p.code, p.title, (SELECT display_name FROM accounts WHERE id=s.claimed_by) claimed_by_name, "
+        "(SELECT display_name FROM accounts WHERE id=s.reviewed_by) reviewed_by_name " + base +
+        " ORDER BY CASE s.status WHEN 'JUDGING' THEN 0 WHEN 'PENDING' THEN 1 ELSE 2 END, s.id DESC LIMIT ? OFFSET ?",
+        args + [page_size, (page - 1) * page_size]).fetchall()
+    problem_codes = [r["code"] for r in conn.execute("SELECT code FROM problems WHERE contest_id=? ORDER BY ordinal,code", (contest["id"],))]
+    my_claim = active_claim(conn, me["id"])
     clar = conn.execute(
         """SELECT c.*, a.display_name participant_name, p.code FROM clarifications c
            JOIN accounts a ON a.id=c.account_id LEFT JOIN problems p ON p.id=c.problem_id
@@ -1346,7 +1362,7 @@ def judge_console():
            FROM registrations r JOIN accounts a ON a.id=r.account_id
            WHERE r.contest_id=? ORDER BY a.display_name""", (contest["id"],)
     ).fetchall()
-    return render_template("judge.html", stats=stats, queue=queue, clar=clar, participants=participants, judge_languages=LANGUAGES, judge_compiler_status=compiler_status())
+    return render_template("judge.html", stats=stats, queue=queue, cutoff=cutoff, my_claim=my_claim, show=show, prob=prob, q=q, page=page, pages=max(1, -(-total_rows // page_size)), total_rows=total_rows, problem_codes=problem_codes, clar=clar, participants=participants, judge_languages=LANGUAGES, judge_compiler_status=compiler_status())
 
 
 @app.post("/judge/clarification/<int:cid>/answer")
@@ -1384,38 +1400,170 @@ def judge_answer(cid):
 @fx._staff_permission("rejudge")
 def rejudge(sid):
     conn = get_db()
-    conn.execute("UPDATE submissions SET status='PENDING',verdict=NULL,runtime_ms=NULL,judging_started_at=NULL,judged_at=NULL,detail='Queued for rejudge.' WHERE id=?", (sid,))
+    conn.execute("UPDATE submissions SET status='PENDING',verdict=NULL,runtime_ms=NULL,judging_started_at=NULL,judged_at=NULL,detail='Queued for rejudge.',manual_override=0,auto_verdict=NULL WHERE id=?", (sid,))
+    fx.audit(conn, "judge.rejudge", contest_id=active_contest(conn)["id"], object_type="submission", object_id=str(sid), detail="Rejudge requested; any manual verdict on this submission was cleared.")
     conn.commit()
     flash(f"Submission #{sid} queued for rejudge.", "success")
     return redirect(url_for("judge_console"))
 
-@app.post("/judge/manual/<int:sid>")
+# ---- Manual code review -------------------------------------------------
+# Auto-judge decides the verdict from program output.  A judge may additionally review the source code:
+# claim one submission (locked to that judge, one active claim at a time), read it, record a note, and
+# optionally override the verdict.  A manual verdict is never overwritten by the auto-judge.
+REVIEW_VERDICTS = ("AC", "WA", "TLE", "RTE", "CE", "MLE", "OLE", "PE")
+
+
+def review_claim_minutes() -> int:
+    try:
+        return max(1, int(os.environ.get("INQUISITOR_REVIEW_CLAIM_MINUTES", "20")))
+    except ValueError:
+        return 20
+
+
+def _claim_cutoff() -> str:
+    return iso(utcnow() - timedelta(minutes=review_claim_minutes()))
+
+
+def active_claim(conn, account_id):
+    """The submission this judge is currently reviewing, or None (claims expire after a period of inactivity)."""
+    return conn.execute(
+        """SELECT s.*, p.code, a.display_name participant_name FROM submissions s
+           JOIN problems p ON p.id=s.problem_id JOIN accounts a ON a.id=s.account_id
+           WHERE s.claimed_by=? AND s.reviewed_at IS NULL AND s.claimed_at>=? ORDER BY s.claimed_at DESC LIMIT 1""",
+        (account_id, _claim_cutoff()),
+    ).fetchone()
+
+
+def _review_state(sub, cutoff):
+    if sub["reviewed_at"]:
+        return "REVIEWED"
+    if sub["claimed_by"] and sub["claimed_at"] and sub["claimed_at"] >= cutoff:
+        return "CLAIMED"
+    return "OPEN"
+
+
+@app.get("/judge/submission/<int:sid>")
 @fx._staff_permission("judge")
-def manual_judge(sid):
-    verdict = request.form.get("verdict", "").strip().upper()
-    detail = request.form.get("detail", "").strip()
-    runtime_raw = request.form.get("runtime_ms", "").strip()
-    allowed = {"AC","WA","TLE","RTE","CE","MLE","OLE","PE"}
-    if verdict not in allowed:
-        flash("Invalid manual verdict.", "danger")
-        return redirect(url_for("judge_console"))
-    runtime_ms = None
-    if runtime_raw:
-        try:
-            runtime_ms = max(0, int(runtime_raw))
-        except ValueError:
-            flash("Runtime must be a non-negative integer.", "danger")
-            return redirect(url_for("judge_console"))
-    conn = get_db()
+def review_submission(sid):
+    conn = get_db(); me = current_user()
+    sub = conn.execute(
+        """SELECT s.*, p.code, p.title, a.display_name participant_name, a.affiliation participant_affiliation,
+                  cb.display_name claimed_by_name, rb.display_name reviewed_by_name
+           FROM submissions s JOIN problems p ON p.id=s.problem_id JOIN accounts a ON a.id=s.account_id
+           LEFT JOIN accounts cb ON cb.id=s.claimed_by LEFT JOIN accounts rb ON rb.id=s.reviewed_by
+           WHERE s.id=?""", (sid,)).fetchone()
+    if not sub:
+        abort(404)
+    state = _review_state(sub, _claim_cutoff())
+    mine = state == "CLAIMED" and sub["claimed_by"] == me["id"]
+    if mine:  # reading the code counts as activity: keep the claim alive
+        conn.execute("UPDATE submissions SET claimed_at=? WHERE id=? AND claimed_by=? AND reviewed_at IS NULL", (iso(utcnow()), sid, me["id"]))
+        conn.commit()
+    other = active_claim(conn, me["id"])
+    return render_template("judge_review.html", sub=sub, state=state, mine=mine, my_other_claim=(other if other and other["id"] != sid else None),
+                           verdicts=REVIEW_VERDICTS, language=LANGUAGES.get(sub["language"]), claim_minutes=review_claim_minutes(), can_force=fx.staff_can("analytics"))
+
+
+@app.post("/judge/submission/<int:sid>/claim")
+@fx._staff_permission("judge")
+def review_claim(sid):
+    conn = get_db(); me = current_user(); now = iso(utcnow()); cutoff = _claim_cutoff()
     sub = conn.execute("SELECT * FROM submissions WHERE id=?", (sid,)).fetchone()
     if not sub:
         abort(404)
-    note = detail or f"Manual verdict applied by {current_user()['display_name']}"
-    now = iso(utcnow())
-    conn.execute("UPDATE submissions SET status='DONE', verdict=?, runtime_ms=?, judging_started_at=COALESCE(judging_started_at, ?), judged_at=?, detail=? WHERE id=?", (verdict, runtime_ms, now, now, note, sid))
-    conn.commit()
-    flash(f"Manual verdict {verdict} applied to submission #{sid}.", "success")
+    if sub["status"] != "DONE":
+        flash("This submission is still being auto-judged. Review it once a verdict is in.", "danger")
+        return redirect(url_for("review_submission", sid=sid))
+    # One atomic statement: the submission must be unreviewed and unclaimed (or its claim expired), and this judge
+    # must not hold another live claim.  Two judges clicking at once cannot both win.
+    cur = conn.execute(
+        """UPDATE submissions SET claimed_by=:me, claimed_at=:now
+           WHERE id=:sid AND reviewed_at IS NULL AND (claimed_by IS NULL OR claimed_by=:me OR claimed_at<:cutoff)
+             AND NOT EXISTS (SELECT 1 FROM submissions o WHERE o.claimed_by=:me AND o.reviewed_at IS NULL
+                             AND o.claimed_at>=:cutoff AND o.id!=:sid)""",
+        {"me": me["id"], "now": now, "sid": sid, "cutoff": cutoff})
+    if cur.rowcount == 1:
+        fx.audit(conn, "review.claim", contest_id=sub["contest_id"], object_type="submission", object_id=str(sid), detail=f"Claimed by {me['display_name']}")
+        conn.commit(); flash(f"You claimed submission #{sid}. It is locked to you until you finish or release it.", "success")
+    else:
+        conn.rollback()
+        fresh = conn.execute("SELECT s.*, a.display_name claimed_by_name FROM submissions s LEFT JOIN accounts a ON a.id=s.claimed_by WHERE s.id=?", (sid,)).fetchone()
+        mine = active_claim(conn, me["id"])
+        if fresh["reviewed_at"]:
+            flash("This submission has already been reviewed.", "danger")
+        elif mine and mine["id"] != sid:
+            flash(f"Finish or release submission #{mine['id']} before claiming another.", "danger")
+        else:
+            flash(f"Submission #{sid} is being reviewed by {fresh['claimed_by_name'] or 'another judge'}.", "danger")
+    return redirect(url_for("review_submission", sid=sid))
+
+
+@app.post("/judge/submission/<int:sid>/release")
+@fx._staff_permission("judge")
+def review_release(sid):
+    conn = get_db(); me = current_user()
+    sub = conn.execute("SELECT * FROM submissions WHERE id=?", (sid,)).fetchone()
+    if not sub:
+        abort(404)
+    forced = sub["claimed_by"] != me["id"]
+    if forced and not fx.staff_can("analytics"):
+        flash("Only the judge holding this claim, a Chief Judge or the Contest Director can release it.", "danger")
+        return redirect(url_for("review_submission", sid=sid))
+    cur = conn.execute("UPDATE submissions SET claimed_by=NULL, claimed_at=NULL WHERE id=? AND reviewed_at IS NULL", (sid,))
+    if cur.rowcount == 1:
+        fx.audit(conn, "review.release", contest_id=sub["contest_id"], object_type="submission", object_id=str(sid), detail=("Force-released by " if forced else "Released by ") + me["display_name"])
+        conn.commit(); flash(f"Submission #{sid} released.", "success")
     return redirect(url_for("judge_console"))
+
+
+@app.post("/judge/submission/<int:sid>/review")
+@fx._staff_permission("judge")
+def review_complete(sid):
+    conn = get_db(); me = current_user()
+    note = request.form.get("note", "").strip(); verdict = request.form.get("verdict", "").strip().upper(); runtime_raw = request.form.get("runtime_ms", "").strip()
+    sub = conn.execute("SELECT * FROM submissions WHERE id=?", (sid,)).fetchone()
+    if not sub:
+        abort(404)
+    if sub["claimed_by"] != me["id"] or sub["reviewed_at"]:
+        flash("Claim this submission before reviewing it.", "danger")
+        return redirect(url_for("review_submission", sid=sid))
+    if verdict and verdict not in REVIEW_VERDICTS:
+        flash("Invalid verdict.", "danger"); return redirect(url_for("review_submission", sid=sid))
+    overriding = bool(verdict) and verdict != sub["verdict"]
+    if overriding and not note:
+        flash("Add a note explaining why you are overriding the auto-judge verdict.", "danger"); return redirect(url_for("review_submission", sid=sid))
+    runtime_ms = sub["runtime_ms"]
+    if overriding and runtime_raw:
+        try: runtime_ms = max(0, int(runtime_raw))
+        except ValueError: flash("Runtime must be a non-negative integer.", "danger"); return redirect(url_for("review_submission", sid=sid))
+    now = iso(utcnow())
+    if overriding:
+        detail = f"Manual verdict by {me['display_name']}: {note}"
+        cur = conn.execute(
+            """UPDATE submissions SET verdict=?, auto_verdict=COALESCE(auto_verdict, verdict), manual_override=1, runtime_ms=?, detail=?,
+                      reviewed_by=?, reviewed_at=?, review_note=? WHERE id=? AND claimed_by=? AND reviewed_at IS NULL""",
+            (verdict, runtime_ms, detail, me["id"], now, note, sid, me["id"]))
+    else:
+        cur = conn.execute("UPDATE submissions SET reviewed_by=?, reviewed_at=?, review_note=? WHERE id=? AND claimed_by=? AND reviewed_at IS NULL", (me["id"], now, note, sid, me["id"]))
+    if cur.rowcount != 1:
+        conn.rollback(); flash("This review could not be saved (the claim changed). Reload and try again.", "danger"); return redirect(url_for("review_submission", sid=sid))
+    if overriding:
+        done = conn.execute("SELECT * FROM submissions WHERE id=?", (sid,)).fetchone()
+        problem = conn.execute("SELECT * FROM problems WHERE id=?", (sub["problem_id"],)).fetchone()
+        append_event(conn, sub["contest_id"], "judgements", f"j-{sid}", api_judgement(done)); fx.on_judgement(conn, done, problem)
+    fx.audit(conn, "review.override" if overriding else "review.complete", contest_id=sub["contest_id"], object_type="submission", object_id=str(sid),
+             detail=(f"{sub['verdict']} -> {verdict}. " if overriding else "Code reviewed, verdict kept. ") + (note or "No note."))
+    conn.commit()
+    flash(f"Verdict changed to {verdict} and review saved." if overriding else "Review saved. The auto-judge verdict stands.", "success")
+    return redirect(url_for("judge_console"))
+
+
+@app.post("/judge/manual/<int:sid>")
+@fx._staff_permission("judge")
+def manual_judge(sid):
+    # Retired: verdict changes now go through the claim -> review flow so they are locked to one judge and audited.
+    flash("Open the submission and claim it to review the code or change its verdict.", "danger")
+    return redirect(url_for("review_submission", sid=sid))
 
 
 @app.post("/judge/rejudge-all")
@@ -1423,9 +1571,11 @@ def manual_judge(sid):
 def rejudge_all():
     contest = active_contest()
     conn = get_db()
-    conn.execute("UPDATE submissions SET status='PENDING',verdict=NULL,runtime_ms=NULL,judging_started_at=NULL,judged_at=NULL,detail='Queued for rejudge.' WHERE contest_id=?", (contest["id"],))
+    cur = conn.execute("UPDATE submissions SET status='PENDING',verdict=NULL,runtime_ms=NULL,judging_started_at=NULL,judged_at=NULL,detail='Queued for rejudge.' WHERE contest_id=? AND manual_override=0", (contest["id"],))
+    kept = conn.execute("SELECT COUNT(*) FROM submissions WHERE contest_id=? AND manual_override=1", (contest["id"],)).fetchone()[0]
+    fx.audit(conn, "judge.rejudge_all", contest_id=contest["id"], object_type="contest", object_id=contest["id"], detail=f"{cur.rowcount} queued; {kept} manual verdict(s) kept.")
     conn.commit()
-    flash("All submissions in the active contest were queued for rejudge.", "success")
+    flash(f"All auto-judged submissions were queued for rejudge. {kept} manually-overridden verdict(s) were kept.", "success")
     return redirect(url_for("judge_console"))
 
 
@@ -2504,7 +2654,11 @@ def judging_worker():
             if not fresh or fresh["status"]!="JUDGING": continue
             result=judge_submission(language=sub["language"],source=sub["source"],tests_dir=PROBLEMS_DIR/sub["contest_id"]/sub["api_id"]/"tests",time_limit_ms=sub["time_limit_ms"],memory_limit_mb=sub["memory_limit_mb"])
             judged=iso(utcnow())
-            conn.execute("UPDATE submissions SET status='DONE',verdict=?,runtime_ms=?,detail=?,judged_at=? WHERE id=?",(result["verdict"],result["runtime_ms"],result["detail"],judged,sub["id"]))
+            # Only write the result if the submission is still ours: a rejudge request or a judge's manual
+            # verdict that landed while this ran must not be overwritten by a stale auto result.
+            wrote=conn.execute("UPDATE submissions SET status='DONE',verdict=?,runtime_ms=?,detail=?,judged_at=? WHERE id=? AND status='JUDGING' AND manual_override=0",(result["verdict"],result["runtime_ms"],result["detail"],judged,sub["id"]))
+            if wrote.rowcount!=1:
+                conn.commit(); continue
             contest=contest_by_id(sub["contest_id"],conn); done=conn.execute("SELECT * FROM submissions WHERE id=?",(sub["id"],)).fetchone()
             append_event(conn,sub["contest_id"],"judgements",f"j-{sub['id']}",api_judgement(done)); problem=conn.execute("SELECT * FROM problems WHERE id=?",(sub["problem_id"],)).fetchone(); fx.on_judgement(conn,done,problem); conn.commit()
         except Exception as exc:
@@ -2514,6 +2668,15 @@ def judging_worker():
             if conn: conn.close()
 
 
+def judge_worker_count() -> int:
+    """Number of parallel auto-judge threads (INQUISITOR_JUDGE_WORKERS). Each runs one Docker judge container at a time."""
+    default = 3 if judge_backend() == "docker" else 1
+    try:
+        return max(1, min(16, int(os.environ.get("INQUISITOR_JUDGE_WORKERS", default))))
+    except ValueError:
+        return default
+
+
 def start_worker():
     # A crash mid-judging leaves rows stuck in JUDGING; put them back in the queue.
     conn = db_connect()
@@ -2521,7 +2684,9 @@ def start_worker():
         conn.execute("UPDATE submissions SET status='PENDING' WHERE status='JUDGING'"); conn.commit()
     finally:
         conn.close()
-    threading.Thread(target=judging_worker,name="inquisitor-judge",daemon=True).start()
+    # Submissions are claimed with an atomic UPDATE ... WHERE status='PENDING', so threads never judge the same one twice.
+    for n in range(judge_worker_count()):
+        threading.Thread(target=judging_worker,name=f"inquisitor-judge-{n+1}",daemon=True).start()
 
 
 if __name__ == "__main__":

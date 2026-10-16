@@ -1,3 +1,42 @@
 {% extends 'base.html' %}{% block title %}Similarity Review{% endblock %}{% block page_title %}Similarity Review{% endblock %}{% block content %}
-<section class="card"><div class="card-head"><div><span class="eyebrow">Post-contest integrity aid</span><h2>Submission similarity review</h2></div><form method="post" class="inline-team-form"><input type="hidden" name="action" value="scan"><input type="number" step="0.01" min="0.5" max="1" name="threshold" value="0.82"><button class="button">Run scan</button></form></div><div class="notice"><strong>Manual review required.</strong> Similarity is a screening signal, not proof of cheating. Contest officials must inspect the submissions and context before taking action.</div><div class="table-wrap"><table><thead><tr><th>Problem</th><th>Submission A</th><th>Submission B</th><th>Similarity</th><th>Status</th><th>Review</th></tr></thead><tbody>{% for f in flags %}<tr><td>{{ f['code'] }}</td><td>#{{ f['submission_a'] }} · {{ f['name_a'] }}</td><td>#{{ f['submission_b'] }} · {{ f['name_b'] }}</td><td><strong>{{ '%.1f'|format(f['similarity']*100) }}%</strong></td><td><span class="badge {{ 'bad' if f['status']=='CONFIRMED' else ('ok' if f['status']=='DISMISSED' else 'warn') }}">{{ f['status'] }}</span></td><td><form method="post" action="{{ url_for('v1.similarity_update', fid=f['id']) }}" class="review-form"><select name="status"><option>REVIEWED</option><option>DISMISSED</option><option>CONFIRMED</option></select><input name="note" value="{{ f['note'] }}" placeholder="Reviewer note"><button class="tiny">Save</button></form></td></tr>{% else %}<tr><td colspan="6" class="empty">No similarity flags. Run a scan after the contest.</td></tr>{% endfor %}</tbody></table></div></section>
+<section class="card">
+  <div class="card-head"><div><span class="eyebrow">Integrity aid</span><h2>Similarity by participant</h2></div></div>
+  <div class="notice"><strong>Manual review required.</strong> Similarity is a screening signal, not proof of cheating. Two submissions are compared only when they are for the same problem in the same language, and very short programs can match by coincidence. Inspect the code before acting.</div>
+  <form method="get" class="inline-team-form" style="margin:12px 0">
+    <input type="hidden" name="run" value="1">
+    <label>Compare<select name="scope">
+      <option value="latest" {{ 'selected' if scope=='latest' }}>Latest submission per problem</option>
+      <option value="all" {{ 'selected' if scope=='all' }}>All submissions, including older ones</option></select></label>
+    <label>Threshold<input type="number" step="0.01" min="0.5" max="1" name="threshold" value="{{ '%.2f'|format(threshold) }}"></label>
+    <label>Problem<select name="problem"><option value="">All problems</option>{% for c in problem_codes %}<option value="{{ c }}" {{ 'selected' if problem_code==c }}>{{ c }}</option>{% endfor %}</select></label>
+    <label class="check"><input type="checkbox" name="everyone" value="1" {{ 'checked' if show_all }}> Show every participant's highest match</label>
+    <button class="button">Check similarity</button>
+  </form>
+  {% if info %}
+    {% if info.error %}<div class="notice"><strong>Not run.</strong> {{ info.error }}</div>
+    {% else %}
+    <p class="muted">{{ info.participants }} participants, {{ info.submissions }} submissions compared ({{ '{:,}'.format(info.pairs) }} pairs). <strong>{{ info.flagged }}</strong> at or above {{ '%.0f'|format(threshold*100) }}%.{% if not show_all %} Only flagged participants are listed.{% endif %}</p>
+    <div class="table-wrap"><table><thead><tr><th>Participant</th><th>Highest match</th><th>Most similar to</th><th>Problem</th><th></th></tr></thead><tbody>
+    {% for p in summary %}
+      <tr>
+        <td><strong>{{ p.name }}</strong>{% if p.flagged %} <span class="badge bad">Flagged</span>{% endif %}</td>
+        <td><strong>{{ '%.1f'|format(p.best*100) }}%</strong></td>
+        <td>{% if p.top %}{{ p.top.other }}{% if p.matches|length > 1 %} <small class="muted">+{{ p.matches|length - 1 }} more</small>{% endif %}{% else %}<span class="muted">{{ 'below threshold' if p.best else 'no comparable submissions' }}</span>{% endif %}</td>
+        <td>{{ p.top.code if p.top else '—' }}</td>
+        <td>{% if p.top %}<a class="tiny buttonlike" href="{{ url_for('v1.similarity_compare', a=p.top.mine, b=p.top.theirs) }}">Compare</a>{% endif %}</td>
+      </tr>
+      {% if p.matches|length > 1 %}<tr><td colspan="5" style="padding-top:0"><details class="profile-details"><summary>All {{ p.matches|length }} matches for {{ p.name }}</summary>
+        <table><tbody>{% for m in p.matches %}<tr><td>{{ m.code }}</td><td>{{ m.other }}</td><td>{{ '%.1f'|format(m.score*100) }}%</td><td><a class="tiny buttonlike" href="{{ url_for('v1.similarity_compare', a=m.mine, b=m.theirs) }}">Compare</a></td></tr>{% endfor %}</tbody></table></details></td></tr>{% endif %}
+    {% else %}<tr><td colspan="5" class="empty">No participant reaches {{ '%.0f'|format(threshold*100) }}% similarity.</td></tr>{% endfor %}
+    </tbody></table></div>
+    {% endif %}
+  {% else %}<p class="muted">Choose what to compare and press Check similarity. Nothing is stored until you flag a pair.</p>{% endif %}
+</section>
+<section class="card">
+  <div class="card-head"><div><span class="eyebrow">Recorded for review</span><h2>Flagged pairs</h2></div></div>
+  <div class="table-wrap"><table><thead><tr><th>Problem</th><th>Submission A</th><th>Submission B</th><th>Similarity</th><th>Status</th><th>Review</th></tr></thead><tbody>{% for f in flags %}<tr><td>{{ f['code'] }}</td><td>#{{ f['submission_a'] }} · {{ f['name_a'] }}</td><td>#{{ f['submission_b'] }} · {{ f['name_b'] }} <a class="tiny buttonlike" href="{{ url_for('v1.similarity_compare', a=f['submission_a'], b=f['submission_b']) }}">Compare</a></td><td><strong>{{ '%.1f'|format(f['similarity']*100) }}%</strong></td><td><span class="badge {{ 'bad' if f['status']=='CONFIRMED' else ('ok' if f['status']=='DISMISSED' else 'warn') }}">{{ f['status'] }}</span></td><td><form method="post" action="{{ url_for('v1.similarity_update', fid=f['id']) }}" class="review-form"><select name="status"><option>REVIEWED</option><option>DISMISSED</option><option>CONFIRMED</option></select><input name="note" value="{{ f['note'] }}" placeholder="Reviewer note"><button class="tiny">Save</button></form></td></tr>{% else %}<tr><td colspan="6" class="empty">No pairs recorded. Use Compare on a participant above, then Flag this pair.</td></tr>{% endfor %}</tbody></table></div>
+  <details class="profile-details" style="margin-top:12px"><summary>Advanced: record every pair above the threshold</summary>
+    <form method="post" class="inline-team-form" style="margin-top:8px"><input type="hidden" name="action" value="scan"><input type="number" step="0.01" min="0.5" max="1" name="threshold" value="0.82"><button class="tiny">Record all pairs</button></form>
+    <p class="muted">Compares all submissions and saves every matching pair as a flag. This can add many rows.</p></details>
+</section>
 {% endblock %}
