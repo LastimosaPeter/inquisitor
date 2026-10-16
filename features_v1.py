@@ -158,6 +158,18 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     ]:
         _add_column(conn, "problems", definition)
 
+    # Manual code review: one judge claims a submission, reviews the source, and may override the auto verdict.
+    for definition in [
+        "claimed_by INTEGER",
+        "claimed_at TEXT",
+        "reviewed_by INTEGER",
+        "reviewed_at TEXT",
+        "review_note TEXT NOT NULL DEFAULT ''",
+        "manual_override INTEGER NOT NULL DEFAULT 0",
+        "auto_verdict TEXT",
+    ]:
+        _add_column(conn, "submissions", definition)
+
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS institutions (
@@ -383,6 +395,22 @@ def _staff_permission(permission: str):
     return deco
 
 
+def staff_can(permission: str) -> bool:
+    """True if the signed-in user holds `permission` (admins and Contest Directors hold everything)."""
+    core = _core(); me = core.current_user()
+    if not me:
+        return False
+    if me["role"] == "admin":
+        return True
+    contest = core.active_contest()
+    if not contest:
+        return False
+    row = core.get_db().execute("SELECT staff_role FROM staff_assignments WHERE contest_id=? AND account_id=?", (contest["id"], me["id"])).fetchone()
+    role = row["staff_role"] if row else ("judge" if me["role"] == "judge" else "")
+    perms = ROLE_PERMISSIONS.get(role, set())
+    return "all" in perms or permission in perms
+
+
 def _csv_list(value: str) -> list[str]:
     return [x.strip() for x in re.split(r"[\n,;]+", value or "") if x.strip()]
 
@@ -534,7 +562,7 @@ def emergency_action():
     elif action=="clear_broadcast":
         conn.execute("UPDATE contests SET emergency_message='' WHERE id=?",(contest["id"],)); msg="Emergency notice cleared."
     elif action=="restart_judging":
-        conn.execute("UPDATE submissions SET status='PENDING',verdict=NULL,runtime_ms=NULL,judging_started_at=NULL,judged_at=NULL,detail='Requeued by emergency control.' WHERE contest_id=? AND status!='PENDING'",(contest["id"],)); msg="All submissions requeued."
+        conn.execute("UPDATE submissions SET status='PENDING',verdict=NULL,runtime_ms=NULL,judging_started_at=NULL,judged_at=NULL,detail='Requeued by emergency control.' WHERE contest_id=? AND status!='PENDING' AND manual_override=0",(contest["id"],)); msg="All submissions requeued."
     else:
         abort(400)
     audit(conn,f"emergency.{action}",contest_id=contest["id"],object_type="contest",object_id=contest["id"],detail=msg); conn.commit(); flash(msg,"success"); return redirect(url_for("v1.operations"))
@@ -763,12 +791,102 @@ def _normalize_source(src: str) -> str:
     src=re.sub(r"/\*.*?\*/"," ",src,flags=re.S); src=re.sub(r"//.*?$|#.*?$"," ",src,flags=re.M); src=re.sub(r"\s+"," ",src); return src.strip().lower()
 
 
+SIMILARITY_DEFAULT_THRESHOLD = 0.82
+SIMILARITY_MIN_SOURCE_CHARS = 40
+SIMILARITY_MAX_PAIRS = 150_000
+
+
+def _parse_threshold(raw) -> float:
+    try:
+        return max(.50, min(1.0, float(raw)))
+    except (TypeError, ValueError):
+        return SIMILARITY_DEFAULT_THRESHOLD
+
+
+def similarity_summary(conn, contest_id: str, *, scope: str, threshold: float, problem_code: str = "", show_all: bool = False):
+    """Per-participant similarity: each participant's highest-matching submission against everyone else's.
+
+    scope "latest" compares only each participant's most recent submission per problem; "all" includes older ones.
+    Nothing is stored. Two submissions are only compared when they are for the same problem in the same language.
+    Returns (rows, info) where rows are sorted by highest similarity and info carries counts / errors.
+    """
+    sql = """SELECT s.id, s.account_id, s.problem_id, s.language, s.source, s.submitted_at, a.display_name, p.code
+             FROM submissions s JOIN accounts a ON a.id=s.account_id JOIN problems p ON p.id=s.problem_id
+             WHERE s.contest_id=? AND s.status='DONE'"""
+    args = [contest_id]
+    if problem_code:
+        sql += " AND p.code=?"; args.append(problem_code)
+    subs = conn.execute(sql + " ORDER BY s.id", args).fetchall()
+    if scope == "latest":
+        newest = {}
+        for s in subs:
+            newest[(s["account_id"], s["problem_id"])] = s  # ordered by id, so the last one wins
+        subs = list(newest.values())
+    groups = {}
+    for s in subs:
+        groups.setdefault((s["problem_id"], s["language"]), []).append(s)
+    pair_total = sum(len(g) * (len(g) - 1) // 2 for g in groups.values())
+    info = {"submissions": len(subs), "pairs": pair_total, "error": ""}
+    if pair_total > SIMILARITY_MAX_PAIRS:
+        info["error"] = f"{pair_total:,} pairs is too many to compare at once. Use 'latest submission per problem' or pick one problem."
+        return [], info
+    people = {}
+    def person(s):
+        return people.setdefault(s["account_id"], {"account_id": s["account_id"], "name": s["display_name"], "best": 0.0, "matches": [], "compared": 0})
+    for s in subs:
+        person(s)
+    for group in groups.values():
+        norm = [_normalize_source(s["source"]) for s in group]
+        for i in range(len(group)):
+            # Canonical order: seq1 = the later submission, seq2 = the earlier one (difflib caches seq2, so this is also fast).
+            matcher = SequenceMatcher(None, "", norm[i], autojunk=True)
+            for j in range(i + 1, len(group)):
+                if group[i]["account_id"] == group[j]["account_id"]:
+                    continue
+                if min(len(norm[i]), len(norm[j])) < SIMILARITY_MIN_SOURCE_CHARS:
+                    continue
+                matcher.set_seq1(norm[j])
+                if not show_all and (matcher.real_quick_ratio() < threshold or matcher.quick_ratio() < threshold):
+                    continue
+                score = matcher.ratio()
+                if score < threshold and not show_all:
+                    continue
+                for me, other in ((group[i], group[j]), (group[j], group[i])):
+                    p = person(me)
+                    p["compared"] += 1
+                    if score >= threshold:
+                        p["matches"].append({"score": score, "other_id": other["account_id"], "other": other["display_name"], "code": me["code"],
+                                             "language": me["language"], "mine": me["id"], "theirs": other["id"]})
+                    if score > p["best"]:
+                        p["best"] = score
+    rows = []
+    for p in people.values():
+        p["matches"].sort(key=lambda m: -m["score"])
+        p["flagged"] = p["best"] >= threshold
+        p["top"] = p["matches"][0] if p["matches"] else None
+        if p["flagged"] or show_all:
+            rows.append(p)
+    rows.sort(key=lambda p: (-p["best"], p["name"].lower()))
+    info["participants"] = len(people)
+    info["flagged"] = sum(1 for p in people.values() if p["flagged"])
+    return rows, info
+
+
 @bp.route("/director/similarity", methods=["GET", "POST"])
 @_staff_permission("analytics")
 def similarity_review():
     core=_core(); conn=core.get_db(); contest=core.active_contest(conn)
+    if request.method=="POST" and request.form.get("action")=="flag":
+        try: a=int(request.form.get("a","0")); b=int(request.form.get("b","0")); score=float(request.form.get("score","0"))
+        except ValueError: abort(400)
+        sa,sb=sorted((a,b))
+        ok=conn.execute("SELECT COUNT(*) FROM submissions WHERE contest_id=? AND id IN (?,?)",(contest["id"],sa,sb)).fetchone()[0]==2 and sa!=sb
+        if ok:
+            conn.execute("INSERT OR IGNORE INTO similarity_flags(contest_id,submission_a,submission_b,similarity,created_at) VALUES(?,?,?,?,?)",(contest["id"],sa,sb,score,core.iso(core.utcnow())))
+            audit(conn,"similarity.flag",contest_id=contest["id"],object_type="submission",object_id=f"{sa},{sb}",detail=f"Pair flagged for review at {score:.1%}"); conn.commit(); flash("Pair recorded for review below.","success")
+        return redirect(url_for("v1.similarity_review"))
     if request.method=="POST" and request.form.get("action")=="scan":
-        threshold=max(.50,min(1.0,float(request.form.get("threshold","0.82")))); subs=conn.execute("SELECT s.*,a.display_name,p.code FROM submissions s JOIN accounts a ON a.id=s.account_id JOIN problems p ON p.id=s.problem_id WHERE s.contest_id=? AND s.status='DONE' ORDER BY s.problem_id,s.id",(contest["id"],)).fetchall(); groups={}
+        threshold=_parse_threshold(request.form.get("threshold",SIMILARITY_DEFAULT_THRESHOLD)); subs=conn.execute("SELECT s.*,a.display_name,p.code FROM submissions s JOIN accounts a ON a.id=s.account_id JOIN problems p ON p.id=s.problem_id WHERE s.contest_id=? AND s.status='DONE' ORDER BY s.problem_id,s.id",(contest["id"],)).fetchall(); groups={}
         for s in subs: groups.setdefault((s["problem_id"],s["language"]),[]).append(s)
         count=0
         for arr in groups.values():
@@ -776,13 +894,40 @@ def similarity_review():
                 for j in range(i+1,len(arr)):
                     if arr[i]["account_id"]==arr[j]["account_id"]: continue
                     a,b=_normalize_source(arr[i]["source"]),_normalize_source(arr[j]["source"])
-                    if min(len(a),len(b))<40: continue
-                    score=SequenceMatcher(None,a,b,autojunk=True).ratio()
+                    if min(len(a),len(b))<SIMILARITY_MIN_SOURCE_CHARS: continue
+                    score=SequenceMatcher(None,b,a,autojunk=True).ratio()
                     if score>=threshold:
                         sa,sb=sorted((arr[i]["id"],arr[j]["id"])); conn.execute("INSERT OR IGNORE INTO similarity_flags(contest_id,submission_a,submission_b,similarity,created_at) VALUES(?,?,?,?,?)",(contest["id"],sa,sb,score,core.iso(core.utcnow()))); count+=1
-        audit(conn,"similarity.scan",contest_id=contest["id"],object_type="contest",object_id=contest["id"],detail=f"threshold={threshold}; pairs={count}"); conn.commit(); flash(f"Similarity scan complete. {count} pair(s) met the threshold. Flags require manual review.","success"); return redirect(url_for("v1.similarity_review"))
+        audit(conn,"similarity.scan",contest_id=contest["id"],object_type="contest",object_id=contest["id"],detail=f"threshold={threshold}; pairs={count}"); conn.commit(); flash(f"Recorded {count} pair(s) at or above {threshold:.0%} for review.","success"); return redirect(url_for("v1.similarity_review"))
+    scope="all" if request.args.get("scope")=="all" else "latest"
+    threshold=_parse_threshold(request.args.get("threshold",SIMILARITY_DEFAULT_THRESHOLD)); problem_code=request.args.get("problem","").strip().upper(); show_all=request.args.get("everyone")=="1"
+    summary=None; info=None
+    if request.args.get("run")=="1":
+        summary,info=similarity_summary(conn,contest["id"],scope=scope,threshold=threshold,problem_code=problem_code,show_all=show_all)
+    problem_codes=[r["code"] for r in conn.execute("SELECT code FROM problems WHERE contest_id=? ORDER BY ordinal,code",(contest["id"],))]
     rows=conn.execute("""SELECT f.*,a1.display_name name_a,a2.display_name name_b,p.code FROM similarity_flags f JOIN submissions s1 ON s1.id=f.submission_a JOIN submissions s2 ON s2.id=f.submission_b JOIN accounts a1 ON a1.id=s1.account_id JOIN accounts a2 ON a2.id=s2.account_id JOIN problems p ON p.id=s1.problem_id WHERE f.contest_id=? ORDER BY f.similarity DESC,f.id DESC""",(contest["id"],)).fetchall()
-    return render_template("v1_similarity.html",flags=rows)
+    return render_template("v1_similarity.html",flags=rows,summary=summary,info=info,scope=scope,threshold=threshold,problem_code=problem_code,show_all=show_all,problem_codes=problem_codes)
+
+
+@bp.get("/director/similarity/compare")
+@_staff_permission("analytics")
+def similarity_compare():
+    core=_core(); conn=core.get_db(); contest=core.active_contest(conn)
+    try: a=int(request.args.get("a","0")); b=int(request.args.get("b","0"))
+    except ValueError: abort(400)
+    fetch=lambda sid: conn.execute("SELECT s.*,x.display_name,p.code,p.title FROM submissions s JOIN accounts x ON x.id=s.account_id JOIN problems p ON p.id=s.problem_id WHERE s.id=? AND s.contest_id=?",(sid,contest["id"])).fetchone()
+    left,right=fetch(a),fetch(b)
+    if not left or not right: abort(404)
+    ll,rl=left["source"].splitlines(),right["source"].splitlines(); rows=[]
+    for tag,i1,i2,j1,j2 in SequenceMatcher(None,ll,rl,autojunk=False).get_opcodes():
+        if tag=="equal":
+            rows += [(ll[i1+k],rl[j1+k],"same") for k in range(i2-i1)]
+        else:
+            n=max(i2-i1,j2-j1)
+            rows += [(ll[i1+k] if i1+k<i2 else None, rl[j1+k] if j1+k<j2 else None, "diff") for k in range(n)]
+    lo,hi=sorted((left,right),key=lambda r:r["id"])  # same order as similarity_summary so the percentages agree
+    score=SequenceMatcher(None,_normalize_source(hi["source"]),_normalize_source(lo["source"]),autojunk=True).ratio()
+    return render_template("v1_similarity_compare.html",left=left,right=right,rows=rows,score=score)
 
 
 @bp.post("/director/similarity/<int:fid>")
