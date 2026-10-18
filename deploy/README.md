@@ -129,12 +129,27 @@ If a contestant is added to the staff list later, the same account becomes staff
 Turn it off again by removing the `INQUISITOR_GOOGLE_CLIENT_ID` line from `~/inquisitor/.env` and running `~/inquisitor/inq up -d`.
 Never put the Client secret in chat, email or the repository. If it leaks, add a new secret in Google Cloud, delete the old one, and run `inq google-setup` again.
 
-## Math in problem statements
+## Writing problem statements (Markdown, math and pictures)
 
-Problem statements accept LaTeX. Write `$x^2$` for a formula inside a sentence, and `$$\sum_{i=1}^{n} a_i$$` (or `\[ ... \]`) for a formula on its own line.
-Type `\$` for a literal dollar sign. Sample input and output are never treated as math. The problem editor shows a live preview under the statement box.
-The math library (KaTeX) is bundled with the site, so contestants' computers do not need internet access. An unfinished formula such as `$x` is left as typed,
-and a formula with a mistake is shown in red instead of breaking the page.
+Statements accept a small, safe set of Markdown plus LaTeX math. The problem editor shows a live preview under the statement box.
+
+| Write | You get |
+|---|---|
+| `**bold**` and `*italic*` | **bold** and *italic* (they can be nested) |
+| `- item` or `* item` on separate lines | a bullet list |
+| `1. step` on separate lines | a numbered list |
+| `` `code` `` and a block fenced by three backticks | code (nothing inside is treated as math or bold) |
+| a blank line | a new paragraph (single line breaks are kept) |
+| `$x^2$` | a formula inside a sentence |
+| `$$\sum_{i=1}^{n} a_i$$` | a formula on its own line |
+| `\$` | a plain dollar sign |
+| `![the graph](graph.png)` | a picture you uploaded to that problem |
+
+Pictures: in **Problems**, open **Edit problem**, find **Pictures for the statement**, upload PNG, JPEG, GIF or WebP files (up to 2 MB each, 12 per problem), then
+paste the shown `![description](file.png)` into the statement. Only pictures uploaded to the problem can be shown, so contestants' computers never fetch anything
+from outside. Pictures are checked by their content (not their name), cleaned file names are used, and they are included when the problem package is exported.
+SVG files are refused. There are no links or raw HTML in statements, so a statement can never run a script. A formula with a mistake is shown in red, and an
+unfinished one such as `$x` is left as typed. The math library (KaTeX) is bundled with the site, so no internet access is needed.
 
 ## Putting it on the internet (Cloudflare Tunnel)
 

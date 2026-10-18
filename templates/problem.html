@@ -10,7 +10,7 @@
       {% set contributor_count = p['contributors'].split(';')|length %}
       <p class="problem-byline"><span>{{ 'Contributors' if contributor_count > 1 else 'Author / Contributor' }}</span> {{ p['contributors'] }}</p>
     {% endif %}
-    <p class="math-source">{{ p['statement'] }}</p>
+    <div class="md-source" data-image-base="/problem/{{ p['code']|urlencode }}/image/" data-image-names="{{ image_names|join(',') }}">{{ p['statement'] }}</div>
     {% if p['sample_input'] or p['sample_output'] %}
       <div class="grid two-one"><div><span class="eyebrow">Sample input</span><pre>{{ p['sample_input'] }}</pre></div><div><span class="eyebrow">Sample output</span><pre>{{ p['sample_output'] }}</pre></div></div>
     {% endif %}

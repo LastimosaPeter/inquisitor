@@ -278,3 +278,15 @@ main{padding-top:26px}.topbar{padding-bottom:18px;margin-bottom:24px}.topbar:aft
 .math-preview{display:grid;gap:6px;margin-top:2px}.math-preview .statement{border:1px dashed var(--line);border-radius:7px;padding:8px 12px;min-height:2.2em}
 .statement .katex{font-size:1.08em}.statement .katex-display{margin:.8em 0;overflow-x:auto;overflow-y:hidden}
 .statement .katex-error{color:#ef6b70}
+
+/* Markdown + pictures in statements */
+.md-source{white-space:pre-line;line-height:1.72}.md-rendered{white-space:normal}
+.md-rendered p{margin:0 0 .8em;white-space:normal}.md-rendered ul,.md-rendered ol{margin:.2em 0 .9em;padding-left:1.5em;line-height:1.7}
+.md-rendered li{margin:.15em 0}.md-rendered strong{color:var(--text-strong)}
+.md-rendered code{padding:1px 5px;border:1px solid var(--line-soft);border-radius:4px;background:#0d1113;font:12.5px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.md-rendered pre code{padding:0;border:0;background:none}
+.statement-img{display:block;max-width:100%;height:auto;margin:.7em 0;border-radius:7px;border:1px solid var(--line-soft)}
+.md-missing{color:var(--red);font-size:12px}
+.problem-images{display:grid;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line-soft)}
+.image-row{display:flex;align-items:center;gap:10px}.image-row img{width:56px;height:40px;object-fit:cover;border-radius:5px;border:1px solid var(--line-soft)}
+.image-row code{flex:1;font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis}

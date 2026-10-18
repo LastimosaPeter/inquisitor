@@ -1,27 +1,3 @@
 <script src="{{ url_for('static', filename='katex/katex.min.js') }}"></script>
 <script src="{{ url_for('static', filename='katex/auto-render.min.js') }}"></script>
-<script>
-/* Math in problem statements is written in LaTeX: $x^2$ inline, $$...$$ or \[...\] on its own line, \$ for a dollar sign.
-   Only text marked .math-source is rendered; <pre>, <code> and <textarea> are never touched. */
-window.renderStatementMath = function (el) {
-  if (!el || !window.renderMathInElement) return;
-  // \$ means a literal dollar sign in the text: hide it from the formula finder, then put it back as a plain $.
-  var ESC = '\uE000';
-  function swap(from, to) {
-    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), node;
-    while ((node = walker.nextNode())) {
-      if (node.nodeValue.indexOf(from) >= 0 && !(node.parentNode.closest && node.parentNode.closest('pre, code, textarea'))) {
-        node.nodeValue = node.nodeValue.split(from).join(to);
-      }
-    }
-  }
-  swap('\\$', ESC);
-  renderMathInElement(el, {
-    delimiters: [{left: '$$', right: '$$', display: true}, {left: '\\[', right: '\\]', display: true},
-                 {left: '\\(', right: '\\)', display: false}, {left: '$', right: '$', display: false}],
-    throwOnError: false, errorColor: '#ef6b70', maxExpand: 200, ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
-  });
-  swap(ESC, '$');
-};
-document.addEventListener('DOMContentLoaded', function () { document.querySelectorAll('.math-source').forEach(window.renderStatementMath); });
-</script>
+<script src="{{ url_for('static', filename='statement.js') }}"></script>

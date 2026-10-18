@@ -652,6 +652,10 @@ def _problem_package_bytes(problem, tests_dir: Path) -> bytes:
         yaml=(f"name: {problem['title']}\nlimits:\n  time_multiplier: 1\n  memory: {problem['memory_limit_mb']}\n")
         z.writestr("problem.yaml",yaml)
         z.writestr("problem_statement/problem.en.md",f"# {problem['title']}\n\n{problem['statement']}\n")
+        images_dir=tests_dir.parent/"images"
+        if images_dir.is_dir():
+            for pic in sorted(images_dir.iterdir()):
+                if pic.is_file(): z.write(pic,f"problem_statement/{pic.name}")
         z.writestr("inquisitor.json",json.dumps({"api_id":problem["api_id"],"code":problem["code"],"title":problem["title"],"difficulty":problem["difficulty"],"tags":problem["tags"],"contributors":problem["contributors"],"source":problem["source"],"points":problem["points"],"time_limit_ms":problem["time_limit_ms"],"memory_limit_mb":problem["memory_limit_mb"],"color":problem["color"]},indent=2))
         for inp in sorted(tests_dir.glob("input*.txt")):
             num=re.findall(r"\d+",inp.stem)[-1]; out=tests_dir/f"output{num}.txt"

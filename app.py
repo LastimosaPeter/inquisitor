@@ -1493,6 +1493,101 @@ def problems():
     return render_template("problems.html", problems=rows)
 
 
+# ---- Pictures in problem statements -------------------------------------------------------------------
+IMAGE_TYPES = {"png": "image/png", "jpg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"}
+MAX_IMAGE_BYTES = 2 * 1024 * 1024
+MAX_IMAGES_PER_PROBLEM = 12
+IMAGE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def problem_images_dir(contest_id: str, api_id: str) -> Path:
+    return PROBLEMS_DIR / contest_id / api_id / "images"
+
+
+def list_problem_images(contest_id: str, api_id: str) -> list[str]:
+    folder = problem_images_dir(contest_id, api_id)
+    if not folder.is_dir():
+        return []
+    return sorted(f.name for f in folder.iterdir() if f.is_file() and IMAGE_NAME_RE.fullmatch(f.name) and f.suffix.lower().lstrip(".") in IMAGE_TYPES)
+
+
+def sniff_image_ext(data: bytes) -> str | None:
+    """The real type of an uploaded picture, from its first bytes (the file name is not trusted)."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"): return "png"
+    if data[:3] == b"\xff\xd8\xff": return "jpg"
+    if data[:6] in (b"GIF87a", b"GIF89a"): return "gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP": return "webp"
+    return None
+
+
+@app.post("/admin/problems/<int:pid>/images")
+@fx._staff_permission("problems")
+def admin_upload_problem_images(pid):
+    conn = get_db(); p = conn.execute("SELECT * FROM problems WHERE id=?", (pid,)).fetchone()
+    if not p:
+        abort(404)
+    folder = problem_images_dir(p["contest_id"], p["api_id"]); folder.mkdir(parents=True, exist_ok=True)
+    existing = set(list_problem_images(p["contest_id"], p["api_id"])); saved, problems = [], []
+    for f in request.files.getlist("images"):
+        if not f or not f.filename:
+            continue
+        data = f.read(MAX_IMAGE_BYTES + 1)
+        if len(data) > MAX_IMAGE_BYTES:
+            problems.append(f"{f.filename}: larger than 2 MB"); continue
+        ext = sniff_image_ext(data)
+        if not ext:
+            problems.append(f"{f.filename}: not a PNG, JPEG, GIF or WebP picture"); continue
+        stem = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(f.filename).stem).strip(".-_")[:48] or "picture"
+        name = f"{stem}.{ext}"
+        if name not in existing and len(existing) >= MAX_IMAGES_PER_PROBLEM:
+            problems.append(f"{f.filename}: this problem already has {MAX_IMAGES_PER_PROBLEM} pictures"); continue
+        (folder / name).write_bytes(data); existing.add(name); saved.append(name)
+    if saved:
+        fx.audit(conn, "problem.images", contest_id=p["contest_id"], object_type="problem", object_id=p["code"], detail="uploaded " + ", ".join(saved)); conn.commit()
+        flash("Uploaded: " + ", ".join(saved) + ". Use ![description](" + saved[0] + ") in the statement.", "success")
+    if problems:
+        flash("Not uploaded: " + "; ".join(problems), "danger")
+    if not saved and not problems:
+        flash("Choose a picture to upload.", "danger")
+    return redirect(url_for("admin_problems"))
+
+
+@app.post("/admin/problems/<int:pid>/images/<name>/delete")
+@fx._staff_permission("problems")
+def admin_delete_problem_image(pid, name):
+    conn = get_db(); p = conn.execute("SELECT * FROM problems WHERE id=?", (pid,)).fetchone()
+    if not p or not IMAGE_NAME_RE.fullmatch(name):
+        abort(404)
+    path = problem_images_dir(p["contest_id"], p["api_id"]) / name
+    if path.is_file():
+        path.unlink()
+        fx.audit(conn, "problem.images", contest_id=p["contest_id"], object_type="problem", object_id=p["code"], detail="deleted " + name); conn.commit()
+        flash(f"Deleted {name}.", "success")
+    return redirect(url_for("admin_problems"))
+
+
+@app.get("/problem/<code>/image/<name>")
+def problem_image(code, name):
+    me = current_user()
+    if not me:
+        return redirect(url_for("login", next=request.path))
+    if me["role"] not in ("participant", "judge", "admin"):
+        abort(403)
+    contest = active_contest()
+    if not contest or not IMAGE_NAME_RE.fullmatch(name):
+        abort(404)
+    staff = me["role"] in ("judge", "admin")
+    p = get_db().execute("SELECT * FROM problems WHERE contest_id=? AND code=?" + ("" if staff else " AND enabled=1"), (contest["id"], code.upper())).fetchone()
+    path = problem_images_dir(contest["id"], p["api_id"]) / name if p else None
+    mimetype = IMAGE_TYPES.get(path.suffix.lower().lstrip(".")) if path else None
+    if not p or not mimetype or not path.is_file():
+        abort(404)
+    resp = send_file(path, mimetype=mimetype, max_age=3600)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["Cache-Control"] = "private, max-age=3600"
+    return resp
+
+
 @app.route("/problem/<code>")
 @participant_required
 def problem(code):
@@ -1500,7 +1595,7 @@ def problem(code):
     p = get_db().execute("SELECT * FROM problems WHERE contest_id=? AND code=? AND enabled=1", (contest["id"], code.upper())).fetchone()
     if not p:
         abort(404)
-    return render_template("problem.html", p=p)
+    return render_template("problem.html", p=p, image_names=list_problem_images(contest["id"], p["api_id"]))
 
 
 @app.route("/submit", methods=["GET", "POST"])
@@ -2100,7 +2195,8 @@ def admin_problems():
             conn.rollback(); flash(str(exc),"danger")
     problems=contest_problems(contest["id"],conn)
     validations={r["problem_id"]:r for r in conn.execute("SELECT pv.* FROM problem_validations pv JOIN (SELECT problem_id,MAX(id) mid FROM problem_validations GROUP BY problem_id) x ON x.mid=pv.id").fetchall()}
-    return render_template("admin_problems.html",problems=problems,count_tests=count_tests,validations=validations)
+    problem_images = {row["id"]: list_problem_images(row["contest_id"], row["api_id"]) for row in problems}
+    return render_template("admin_problems.html",problems=problems,count_tests=count_tests,validations=validations,problem_images=problem_images)
 
 
 @app.post("/admin/problems/<int:pid>/update")
