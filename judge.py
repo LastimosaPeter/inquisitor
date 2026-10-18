@@ -109,11 +109,19 @@ def _compile_memory_mb() -> int:
         return 1536
 
 
+def _cpu_shares_args() -> list[str]:
+    """Optional CPU priority for judge containers (INQUISITOR_JUDGE_CPU_SHARES, Docker default 1024). A lower value only matters
+    when the CPU is contended: other services on the same host then get the processor first."""
+    raw = os.environ.get("INQUISITOR_JUDGE_CPU_SHARES", "").strip()
+    return ["--cpu-shares", str(max(2, int(raw)))] if raw.isdigit() else []
+
+
 def _docker_base(work: Path, memory_mb: int, name: str, pids: int = 64) -> list[str]:
     image = os.environ.get("INQUISITOR_JUDGE_IMAGE", "inquisitor-judge-runtime:1.0")
     mem = max(32, memory_mb)
     return [
         "docker", "run", "--rm", "-i", "--name", name, "--network", "none", "--cpus", os.environ.get("INQUISITOR_JUDGE_CPUS", "1"),
+        *_cpu_shares_args(),
         "--memory", f"{mem}m", "--memory-swap", f"{mem}m", "--pids-limit", str(pids),
         "--ulimit", "fsize=268435456", "--ulimit", "core=0",
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "65534:65534", "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
