@@ -6,6 +6,7 @@ import io
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -485,16 +486,34 @@ def staff():
     core = _core(); conn = core.get_db(); contest = core.active_contest(conn)
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower(); email = request.form.get("email", "").strip().lower(); display = request.form.get("display_name", "").strip(); password = request.form.get("password", "").strip(); staff_role = request.form.get("staff_role", "judge")
+        email_ok = bool(email) and bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email))
+        google_only = email_ok and not password          # whitelisted by email: they sign in with Google, no password
         if staff_role not in STAFF_ROLES:
             flash("Invalid staff role.", "danger")
-        elif not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{2,31}", username or "") or len(password) < 6 or not display or (email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email)):
-            flash("Provide a valid username, name, and password of at least 6 characters.", "danger")
+        elif email and not email_ok:
+            flash("Enter a valid email address.", "danger")
+        elif not google_only and (not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{2,31}", username or "") or len(password) < 6 or not display):
+            flash("Enter the staff member's ADNU email, or a name, username and a password of at least 6 characters.", "danger")
         else:
             try:
-                cur = conn.execute("INSERT INTO accounts(username,email,password_hash,display_name,affiliation,role,created_at) VALUES(?,?,?,?,?,?,?)", (username, email, generate_password_hash(password), display, "TACTICS x ACPC", "judge", core.iso(core.utcnow())))
-                conn.execute("INSERT INTO staff_assignments(contest_id,account_id,staff_role,created_at) VALUES(?,?,?,?)", (contest["id"], cur.lastrowid, staff_role, core.iso(core.utcnow())))
-                audit(conn, "staff.create", contest_id=contest["id"], object_type="account", object_id=cur.lastrowid, detail=f"{display} - {STAFF_ROLES[staff_role]}")
-                conn.commit(); flash("Staff account created.", "success"); return redirect(url_for("v1.staff"))
+                existing = conn.execute("SELECT * FROM accounts WHERE lower(email)=? OR lower(alt_email)=? ORDER BY id LIMIT 1", (email, email)).fetchone() if email else None
+                if existing and existing["role"] == "admin":
+                    flash("That person is already a director.", "danger")
+                    return redirect(url_for("v1.staff"))
+                if existing:
+                    account_id = existing["id"]; display = existing["display_name"] or display
+                    conn.execute("UPDATE accounts SET role='judge' WHERE id=?", (account_id,))
+                else:
+                    if google_only:
+                        username = username or core._unique_username(conn, email); display = display or username; pw_hash = generate_password_hash(secrets.token_hex(32))
+                    else:
+                        pw_hash = generate_password_hash(password)
+                    cur = conn.execute("INSERT INTO accounts(username,email,password_hash,display_name,affiliation,role,created_at) VALUES(?,?,?,?,?,?,?)", (username, email, pw_hash, display, "TACTICS x ACPC", "judge", core.iso(core.utcnow())))
+                    account_id = cur.lastrowid
+                conn.execute("DELETE FROM staff_assignments WHERE contest_id=? AND account_id=?", (contest["id"], account_id))
+                conn.execute("INSERT INTO staff_assignments(contest_id,account_id,staff_role,created_at) VALUES(?,?,?,?)", (contest["id"], account_id, staff_role, core.iso(core.utcnow())))
+                audit(conn, "staff.create", contest_id=contest["id"], object_type="account", object_id=account_id, detail=f"{display or email} - {STAFF_ROLES[staff_role]}" + (" (Google sign-in)" if google_only else ""))
+                conn.commit(); flash("Added to staff. They sign in with Google using that address." if google_only else "Staff account created.", "success"); return redirect(url_for("v1.staff"))
             except sqlite3.IntegrityError:
                 conn.rollback(); flash("Username or email already exists.", "danger")
     rows = conn.execute("""SELECT a.*,s.staff_role FROM staff_assignments s JOIN accounts a ON a.id=s.account_id WHERE s.contest_id=? ORDER BY a.display_name""", (contest["id"],)).fetchall()

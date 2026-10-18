@@ -1061,6 +1061,17 @@ def healthz():
         return jsonify({"status":"error"}),503
 
 
+def staff_landing_endpoint(me) -> str:
+    """The first page a staff member's role gives access to (so a problem setter does not land on a 403)."""
+    contest = active_contest()
+    role = (fx.staff_display_role(contest["id"], me["id"]) if contest else None) or "judge"
+    perms = fx.ROLE_PERMISSIONS.get(role, set())
+    for perm, endpoint in (("judge", "judge_console"), ("problems", "admin_problems"), ("participants", "admin_participants"), ("announcements", "v1.public_announcements")):
+        if "all" in perms or perm in perms:
+            return endpoint
+    return "leaderboard"
+
+
 @app.route("/")
 def index():
     me = current_user()
@@ -1069,7 +1080,7 @@ def index():
     if me["role"] == "admin":
         return redirect(url_for("admin_dashboard"))
     if me["role"] == "judge":
-        return redirect(url_for("judge_console"))
+        return redirect(url_for(staff_landing_endpoint(me)))
     return redirect(url_for("dashboard"))
 
 

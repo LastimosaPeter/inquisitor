@@ -80,14 +80,56 @@ def add_director_command(args):
     print("They can now sign in with Google at the site's sign-in page. Their name is filled in from Google the first time.")
 
 
+def add_staff_command(args):
+    """Whitelist someone by email: manage.py add-staff --email a@adnu.edu.ph --role judge|director|chief_judge|problem_setter|technical_admin|registration_staff|spectator [--also b]"""
+    import re, secrets
+    from werkzeug.security import generate_password_hash
+    role = (args.role or "").strip().lower().replace("-", "_")
+    if role in ("director", "admin"):
+        return add_director_command(args)
+    if role not in fx.STAFF_ROLES:
+        raise SystemExit("Role must be one of: director, " + ", ".join(fx.STAFF_ROLES))
+    email = (args.email or "").strip().lower(); also = (args.also or "").strip().lower() or None
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email) or (also and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", also)):
+        raise SystemExit("Give a valid email address.")
+    with app.app.app_context():
+        app.init_db()
+        conn = app.db_connect()
+        try:
+            contest = app.active_contest(conn)
+            if not contest:
+                raise SystemExit("There is no active contest to assign staff to.")
+            row = conn.execute("SELECT id,role,username FROM accounts WHERE lower(email) IN (?,?) OR lower(alt_email) IN (?,?) ORDER BY id LIMIT 1", (email, also or email, email, also or email)).fetchone()
+            if row and row["role"] == "admin":
+                print(f"{email} is already a director."); return
+            if row:
+                aid, username = row["id"], row["username"]
+                conn.execute("UPDATE accounts SET role='judge', alt_email=COALESCE(alt_email,?) WHERE id=?", (also, aid))
+            else:
+                username = app._unique_username(conn, email)
+                cur = conn.execute("INSERT INTO accounts(username,email,alt_email,password_hash,display_name,affiliation,role,created_at) VALUES(?,?,?,?,?,?,'judge',?)",
+                                   (username, email, also, generate_password_hash(secrets.token_hex(32)), username, "TACTICS x ACPC", app.iso(app.utcnow())))
+                aid = cur.lastrowid
+            conn.execute("DELETE FROM staff_assignments WHERE contest_id=? AND account_id=?", (contest["id"], aid))
+            conn.execute("INSERT INTO staff_assignments(contest_id,account_id,staff_role,created_at) VALUES(?,?,?,?)", (contest["id"], aid, role, app.iso(app.utcnow())))
+            conn.commit()
+            print(f"{username} <{email}> is now {fx.STAFF_ROLES[role]} for {contest['name']}.")
+        finally:
+            conn.close()
+    print("They sign in with Google on the normal sign-in page. Anyone not on the staff list is a contestant.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Inquisitor management utility")
-    parser.add_argument("command", choices=["init", "backup", "check", "staff-path", "add-director"])
+    parser.add_argument("command", choices=["init", "backup", "check", "staff-path", "add-director", "add-staff"])
     parser.add_argument("--email", help="add-director: the director's ADNU email")
-    parser.add_argument("--also", help="add-director: a second address that also signs in as this director")
+    parser.add_argument("--also", help="add-director/add-staff: a second address that also signs in as this person")
+    parser.add_argument("--role", help="add-staff: director, chief_judge, judge, problem_setter, technical_admin, registration_staff or spectator")
     args = parser.parse_args()
     if args.command == "add-director":
         return add_director_command(args)
+    if args.command == "add-staff":
+        return add_staff_command(args)
     {"init": init_command, "backup": backup_command, "check": check_command, "staff-path": staff_path_command}[args.command]()
 
 

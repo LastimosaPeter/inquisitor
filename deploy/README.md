@@ -101,15 +101,21 @@ Their contest account is created automatically while registration is open. Only 
 3. Directors and judges sign in at that hidden staff address (username and password). It is long and random on purpose.
    Bookmark it, and print it again any time with `~/inquisitor/inq staff-url`. Don't share it.
 
-Make a director or judge who signs in with Google (their account must exist first; this creates it):
+**Who gets in as what.** Everyone who signs in with an ADNU Google account is a **contestant** by default and lands on the
+contestant pages. Only people on the **staff list** get staff pages, and each lands on the page their role uses. Add staff either way:
 
-```bash
-~/inquisitor/inq add-director name@adnu.edu.ph                       # one address
-~/inquisitor/inq add-director name@gbox.adnu.edu.ph name@adnu.edu.ph  # either address signs in as the same person
-```
+- **On the website**, as a director: open **Staff & Roles**, type their ADNU email, pick a role, click **Add to staff**.
+  No password is needed. Their name is filled in from Google the first time they sign in.
+- **On the server**, which is also how directors are created (the website cannot create directors):
+  ```bash
+  ~/inquisitor/inq add-staff ktapel@gbox.adnu.edu.ph director ktapel@adnu.edu.ph   # a director; the 3rd value is a second address that also works
+  ~/inquisitor/inq add-staff ilastimosa@adnu.edu.ph director
+  ~/inquisitor/inq add-staff someone@adnu.edu.ph judge
+  ```
+  Roles: `director`, `chief_judge`, `judge`, `problem_setter`, `technical_admin`, `registration_staff`, `spectator`.
 
-They then open the normal sign-in page and use **Continue with Google**; their name is filled in from Google the first time.
-(Students are different: they register themselves while registration is open.)
+Staff roles other than director belong to the active contest; add them again for a new contest.
+If a contestant is added to the staff list later, the same account becomes staff (no duplicate).
 
 Turn it off again by removing the `INQUISITOR_GOOGLE_CLIENT_ID` line from `~/inquisitor/.env` and running `~/inquisitor/inq up -d`.
 Never put the Client secret in chat, email or the repository. If it leaks, add a new secret in Google Cloud, delete the old one, and run `inq google-setup` again.
