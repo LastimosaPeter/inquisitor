@@ -51,8 +51,18 @@ CPP_WRONG = "#include <iostream>\nint main(){std::cout<<0<<std::endl;}"
 
 print(f"Testing {BASE}\n")
 st, body = Client().get("/healthz"); check("web server is healthy", st == 200, body.strip()[:40])
+def find_sign_in_path():
+    """/login takes passwords unless Google sign-in is on; then staff use the hidden staff page (asked from the inq helper)."""
+    st, _ = Client().post("/login", {"username": "x", "password": "x"})
+    if st != 404: return "/login"
+    import subprocess
+    inq = os.path.join(os.path.dirname(os.path.abspath(__file__)), "inq")
+    out = subprocess.run([inq, "staff-url"], capture_output=True, text=True).stdout
+    m = re.search(r"(/staff-[0-9a-f]+|/\S+)\s*$", out.strip()); return m.group(1) if m else "/login"
+SIGN_IN = find_sign_in_path()
+print(f"Sign-in: {'Google for students, staff page for directors and judges' if SIGN_IN != '/login' else 'username and password (Google sign-in is off)'}\n")
 admin = Client()
-st, text = admin.post("/login", {"username": env_value("INQUISITOR_BOOTSTRAP_ADMIN_USER"), "password": env_value("INQUISITOR_BOOTSTRAP_ADMIN_PASSWORD")})
+st, text = admin.post(SIGN_IN, {"username": env_value("INQUISITOR_BOOTSTRAP_ADMIN_USER"), "password": env_value("INQUISITOR_BOOTSTRAP_ADMIN_PASSWORD")})
 if not check("director can sign in", "Sign out" in text): raise SystemExit("cannot continue without the director login")
 for p in ("/admin", "/judge", "/admin/participants", "/director/similarity", "/director/audit", "/director/operations"):
     check(f"director page {p} opens", admin.get(p)[0] == 200)
@@ -61,7 +71,7 @@ check("judge console reports every language ready", langs and all(x == "Ready" f
 
 user = "smoke-" + uuid.uuid4().hex[:4]; pw = "smoke-pass-" + uuid.uuid4().hex[:6]
 st, text = admin.post_file("/director/participants/import", {}, "csv_file", "smoke.csv", f"username,display_name,department,password\n{user},Smoke Test,Computer Science,{pw}\n", "/admin/participants")
-student = Client(); st, text = student.post("/login", {"username": user, "password": pw})
+student = Client(); st, text = student.post(SIGN_IN, {"username": user, "password": pw})
 if not check("test student was created by CSV import and can sign in", "Sign out" in text, user): raise SystemExit("cannot continue without the test student")
 if "Change password" in text or "/change-password" in student.get("/dashboard")[1] and False: pass
 sent = 0
@@ -81,7 +91,6 @@ _, queue = admin.get(f"/judge?q={user}&show=unreviewed"); ids = list(dict.fromke
 if check("judge console lists the test submissions for review", len(ids) >= 3, f"{len(ids)} found") :
     sid = ids[0]; _, claim = admin.post(f"/judge/submission/{sid}/claim", {}, f"/judge/submission/{sid}")
     check("a judge can claim a submission and read its code", "You claimed" in claim and "class=\"code-view\"" in claim)
-    other = Client(); other.post("/login", {"username": env_value("INQUISITOR_BOOTSTRAP_ADMIN_USER"), "password": env_value("INQUISITOR_BOOTSTRAP_ADMIN_PASSWORD")})
     _, second = admin.post(f"/judge/submission/{ids[1]}/claim", {}, f"/judge/submission/{ids[1]}")
     check("the same judge cannot hold two claims at once", "Finish or release" in strip(second))
     _, done = admin.post(f"/judge/submission/{sid}/review", {"verdict": "", "note": "smoke test review"}, f"/judge/submission/{sid}")

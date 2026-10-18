@@ -16,15 +16,6 @@
       </a>
       <p class="auth-help">Use your ADNU email ({% for d in google_login.domains %}<strong>@{{ d }}</strong>{{ ' or ' if not loop.last }}{% endfor %}). Your contest account is created the first time you sign in.</p>
     </div>
-    <div class="auth-divider"><span>Directors and judges</span></div>
-    <details class="staff-signin" {{ 'open' if staff_open }}>
-      <summary>Sign in with a username and password</summary>
-      <form method="post" class="form-stack">
-        <label>Username<input name="username" autocomplete="username" required></label>
-        <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
-        <button class="button wide" type="submit">Sign in</button>
-      </form>
-    </details>
   {% else %}
     <form method="post" class="form-stack">
       <label>Username or email<input name="username" autocomplete="username" autofocus required></label>

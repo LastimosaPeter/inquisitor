@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import io
 import json
 import os
@@ -11,6 +12,9 @@ import sqlite3
 import shutil
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import zipfile
 from datetime import datetime, timedelta, timezone
 from functools import wraps
@@ -970,17 +974,23 @@ def localdt(value):
 
 
 def google_login_config():
-    """Google sign-in settings, or None when it is not configured (INQUISITOR_GOOGLE_CLIENT_ID unset).
+    """Google sign-in settings, or None when it is not configured (needs INQUISITOR_GOOGLE_CLIENT_ID and _CLIENT_SECRET).
 
-    Only Google accounts whose email is on one of the allowed domains can register or sign in
+    Only Google accounts whose address AND hosted-domain claim are on an allowed domain can register or sign in
     (INQUISITOR_GOOGLE_DOMAINS, comma separated; default adnu.edu.ph and gbox.adnu.edu.ph).
     """
     client_id = os.environ.get("INQUISITOR_GOOGLE_CLIENT_ID", "").strip()
-    if not client_id:
+    client_secret = os.environ.get("INQUISITOR_GOOGLE_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
         return None
     raw = os.environ.get("INQUISITOR_GOOGLE_DOMAINS", "adnu.edu.ph,gbox.adnu.edu.ph")
-    domains = [d.strip().lower().lstrip("@") for d in raw.split(",") if d.strip()]
-    return {"client_id": client_id, "domains": domains}
+    return {
+        "client_id": client_id, "client_secret": client_secret,
+        "domains": [d.strip().lower().lstrip("@") for d in raw.split(",") if d.strip()],
+        # endpoints can be overridden so the flow can be tested against a fake Google
+        "auth_url": os.environ.get("INQUISITOR_GOOGLE_AUTH_URL", "https://accounts.google.com/o/oauth2/v2/auth"),
+        "token_url": os.environ.get("INQUISITOR_GOOGLE_TOKEN_URL", "https://oauth2.googleapis.com/token"),
+    }
 
 
 @app.context_processor
@@ -1055,7 +1065,7 @@ def healthz():
 def index():
     me = current_user()
     if not me:
-        return redirect(url_for("leaderboard"))
+        return redirect(url_for("login") if google_login_config() else url_for("leaderboard"))
     if me["role"] == "admin":
         return redirect(url_for("admin_dashboard"))
     if me["role"] == "judge":
@@ -1063,15 +1073,15 @@ def index():
     return redirect(url_for("dashboard"))
 
 
-@app.route("/login", methods=["GET", "POST"])
-def login():
+def _password_login_view(template: str):
+    """Username + password sign-in (rate limited). Used by /login when Google sign-in is not configured, and by the staff sign-in page."""
     if request.method == "POST":
         client=(request.remote_addr or "unknown")[:80]; now_ts=time.time()
         attempts=[t for t in LOGIN_ATTEMPTS.get(client,[]) if now_ts-t<LOGIN_WINDOW_SECONDS]
         LOGIN_ATTEMPTS[client]=attempts
         if len(attempts)>=LOGIN_MAX_FAILURES:
             flash("Too many failed sign-in attempts. Try again in a few minutes.", "danger")
-            return render_template("login.html", staff_open=True), 429
+            return render_template(template, staff_open=True), 429
         username = request.form.get("username", "").strip().lower()
         password = request.form.get("password", "")
         user = get_db().execute("SELECT * FROM accounts WHERE username=? OR email=?", (username, username)).fetchone()
@@ -1086,25 +1096,246 @@ def login():
             return redirect(url_for("index"))
         attempts.append(now_ts); LOGIN_ATTEMPTS[client]=attempts
         flash("Invalid username or password.", "danger")
-        return render_template("login.html", staff_open=True)
-    return render_template("login.html")
+        return render_template(template, staff_open=True)
+    return render_template(template)
 
 
-# ---- Google sign-in (ADNU accounts) -- DESIGN PREVIEW: the pages render, the Google exchange is not connected yet ----
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if google_login_config():
+        # Students use Google. The password form is not offered here, and the endpoint refuses password attempts.
+        if request.method == "POST":
+            abort(404)
+        return render_template("login.html")
+    return _password_login_view("login.html")
+
+
+def staff_login_path() -> str:
+    """Hidden address of the director/judge password sign-in (INQUISITOR_STAFF_LOGIN_PATH, or derived from the secret key)."""
+    custom = os.environ.get("INQUISITOR_STAFF_LOGIN_PATH", "").strip()
+    if custom:
+        return "/" + custom.strip("/")
+    digest = hmac.new(app.config["SECRET_KEY"].encode(), b"inquisitor-staff-login", hashlib.sha256).hexdigest()[:24]
+    return "/staff-" + digest
+
+
+def staff_login():
+    resp = make_response(_password_login_view("login_staff.html"))
+    resp.headers["X-Robots-Tag"] = "noindex, nofollow"
+    return resp
+
+
+app.add_url_rule(staff_login_path(), "staff_login", staff_login, methods=["GET", "POST"])
+
+
+# ---- Google sign-in (ADNU accounts) ----------------------------------------------------------------
+# Authorization-code flow with PKCE. The ID token is received straight from Google's token endpoint over TLS
+# (OpenID Connect Core 3.1.3.7), so we validate its claims; only accounts on the allowed domains get in.
+GOOGLE_ISSUERS = {"https://accounts.google.com", "accounts.google.com"}
+GOOGLE_STATE_TTL = 600
+GOOGLE_PENDING_TTL = 1800
+GOOGLE_DOMAIN_ERROR = "That Google account is not an ADNU account. Sign in with your {domains} email."
+
+
+def registration_is_closed(contest) -> bool:
+    now = utcnow()
+    reg_start = parse_dt(contest["registration_start"]) if contest["registration_start"] else None
+    reg_end = parse_dt(contest["registration_end"]) if contest["registration_end"] else None
+    return bool((not contest["signup_open"]) or (reg_start and now < reg_start) or (reg_end and now > reg_end)
+                or contest["lifecycle_phase"] in {"registration_closed", "running", "ended", "finalized", "archived"})
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def _google_redirect_uri() -> str:
+    base = os.environ.get("INQUISITOR_PUBLIC_URL", "").strip().rstrip("/") or request.url_root.rstrip("/")
+    return base + "/auth/google/callback"
+
+
+def _domains_text(cfg) -> str:
+    return " or ".join("@" + d for d in cfg["domains"])
+
+
+def _google_fail(message: str):
+    flash(message, "danger")
+    return redirect(url_for("login"))
+
+
+def _google_exchange_code(cfg, code: str, verifier: str) -> dict:
+    body = urllib.parse.urlencode({
+        "code": code, "client_id": cfg["client_id"], "client_secret": cfg["client_secret"],
+        "redirect_uri": _google_redirect_uri(), "grant_type": "authorization_code", "code_verifier": verifier,
+    }).encode()
+    req = urllib.request.Request(cfg["token_url"], data=body, headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _jwt_claims(token: str) -> dict:
+    parts = (token or "").split(".")
+    if len(parts) != 3:
+        raise ValueError("not a JWT")
+    return json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+
+
+def _check_google_claims(cfg, claims: dict, nonce: str) -> str | None:
+    """Return None when the ID token is acceptable, otherwise a message for the student."""
+    if claims.get("iss") not in GOOGLE_ISSUERS:
+        return "Google sign-in could not be verified. Please try again."
+    aud = claims.get("aud")
+    if cfg["client_id"] not in (aud if isinstance(aud, list) else [aud]):
+        return "Google sign-in could not be verified. Please try again."
+    try:
+        if float(claims.get("exp", 0)) < time.time():
+            return "Google sign-in could not be verified. Please try again."
+    except (TypeError, ValueError):
+        return "Google sign-in could not be verified. Please try again."
+    if not nonce or not hmac.compare_digest(str(claims.get("nonce", "")), nonce):
+        return "Google sign-in could not be verified. Please try again."
+    email = str(claims.get("email", "")).strip().lower()
+    if not claims.get("sub") or not email or claims.get("email_verified") not in (True, "true"):
+        return "Google sign-in could not be verified. Please try again."
+    domain = email.rpartition("@")[2]
+    hosted = str(claims.get("hd", "")).strip().lower()
+    # Both the address and Google's hosted-domain claim must be ADNU: a personal Gmail account has no hd claim.
+    if domain not in cfg["domains"] or hosted not in cfg["domains"]:
+        return GOOGLE_DOMAIN_ERROR.format(domains=_domains_text(cfg))
+    return None
+
+
+def _unique_username(conn, email: str) -> str:
+    base = re.sub(r"[^a-z0-9._-]", "", email.split("@")[0].lower()).strip("._-")[:28] or "student"
+    if len(base) < 3:
+        base = (base + "student")[:12]
+    name, n = base, 1
+    while conn.execute("SELECT 1 FROM accounts WHERE username=?", (name,)).fetchone():
+        n += 1
+        name = f"{base}{n}"
+    return name
+
+
 @app.get("/auth/google")
 def google_login():
-    flash("Google sign-in is not connected yet.", "danger")
-    return redirect(url_for("login"))
+    cfg = google_login_config()
+    if not cfg:
+        abort(404)
+    if current_user():
+        return redirect(url_for("index"))
+    state, nonce, verifier = secrets.token_urlsafe(24), secrets.token_urlsafe(24), secrets.token_urlsafe(48)
+    session["google_oauth"] = {"state": state, "nonce": nonce, "verifier": verifier, "at": time.time()}
+    params = {
+        "client_id": cfg["client_id"], "redirect_uri": _google_redirect_uri(), "response_type": "code", "scope": "openid email profile",
+        "state": state, "nonce": nonce, "code_challenge": _b64url(hashlib.sha256(verifier.encode()).digest()), "code_challenge_method": "S256",
+        "prompt": "select_account", "hd": "*",
+    }
+    return redirect(cfg["auth_url"] + "?" + urllib.parse.urlencode(params))
+
+
+@app.get("/auth/google/callback")
+def google_callback():
+    cfg = google_login_config()
+    if not cfg:
+        abort(404)
+    saved = session.pop("google_oauth", None)          # single use: a replayed callback finds nothing
+    if request.args.get("error"):
+        return _google_fail("Google sign-in was cancelled.")
+    given = request.args.get("state", "")
+    if not saved or time.time() - saved.get("at", 0) > GOOGLE_STATE_TTL or not given or not hmac.compare_digest(saved["state"], given):
+        return _google_fail("That sign-in link expired. Please try again.")
+    code = request.args.get("code", "")
+    if not code:
+        return _google_fail("Google sign-in did not complete. Please try again.")
+    try:
+        tokens = _google_exchange_code(cfg, code, saved["verifier"])
+        claims = _jwt_claims(tokens.get("id_token", ""))
+    except Exception as exc:                            # network, bad response, malformed token
+        print("Google sign-in failed:", repr(exc), flush=True)
+        return _google_fail("Could not complete sign-in with Google. Please try again.")
+    problem = _check_google_claims(cfg, claims, saved["nonce"])
+    if problem:
+        return _google_fail(problem)
+    email, sub = str(claims["email"]).strip().lower(), str(claims["sub"])
+    name = str(claims.get("name") or email.split("@")[0]).strip()[:120]
+    conn = get_db(); contest = active_contest(conn)
+    account = conn.execute("SELECT * FROM accounts WHERE google_sub=?", (sub,)).fetchone()
+    if not account:
+        account = conn.execute("SELECT * FROM accounts WHERE lower(email)=? ORDER BY id LIMIT 1", (email,)).fetchone()
+    if account and account["role"] != "participant":
+        return _google_fail("Directors and judges sign in with the staff sign-in page.")
+    if account:
+        if not account["google_sub"]:
+            conn.execute("UPDATE accounts SET google_sub=? WHERE id=?", (sub, account["id"])); conn.commit()
+        registered = participant_registered(contest["id"], account["id"], conn) if contest else True
+        if not registered and contest and not registration_is_closed(contest):
+            session.clear()
+            session["google_pending"] = {"sub": sub, "email": email, "name": account["display_name"] or name, "account_id": account["id"], "at": time.time()}
+            return redirect(url_for("google_complete"))
+        session.clear(); session["user_id"] = account["id"]
+        flash(f"Welcome, {account['display_name']}.", "success")
+        return redirect(url_for("index"))
+    if not contest:
+        return _google_fail("No contest is open for registration yet.")
+    if registration_is_closed(contest):
+        return _google_fail("Registration is closed. Only students who registered earlier can sign in.")
+    session.clear()
+    session["google_pending"] = {"sub": sub, "email": email, "name": name, "at": time.time()}
+    return redirect(url_for("google_complete"))
 
 
 @app.route("/auth/google/complete", methods=["GET", "POST"])
 def google_complete():
+    cfg = google_login_config()
+    if not cfg:
+        abort(404)
     pending = session.get("google_pending")
-    if not pending:
-        return redirect(url_for("login"))
+    if not pending or time.time() - pending.get("at", 0) > GOOGLE_PENDING_TTL:
+        session.pop("google_pending", None)
+        return _google_fail("Your sign-in expired. Please sign in with Google again.")
+    conn = get_db(); contest = active_contest(conn)
+    if not contest or registration_is_closed(contest):
+        session.pop("google_pending", None)
+        return _google_fail("Registration is closed. Only students who registered earlier can sign in.")
+    institutions = conn.execute("SELECT * FROM institutions WHERE active=1 ORDER BY name").fetchall()
     if request.method == "POST":
-        flash("Google sign-in is not connected yet.", "danger")
-    institutions = get_db().execute("SELECT * FROM institutions WHERE active=1 ORDER BY name").fetchall()
+        f = request.form
+        display_name = f.get("display_name", "").strip(); department = f.get("department", "").strip(); college = f.get("college", "").strip()
+        year_level = f.get("year_level", "").strip(); affiliation = f.get("affiliation", "").strip(); team_name = f.get("team_name", "").strip() if contest["competition_mode"] == "team" else ""
+        try:
+            if not display_name:
+                raise ValueError("Full name is required.")
+            if not department:
+                raise ValueError("Department / program is required.")
+            errors = fx.eligibility_errors(contest, department=department, college=college, institution=affiliation, year_level=year_level)
+            if errors:
+                raise ValueError(" ".join(errors))
+            if contest["competition_mode"] == "team" and team_name:
+                ok, _count = fx.team_size_ok(conn, contest, team_name)
+                if not ok:
+                    raise ValueError(f"Team '{team_name}' already reached the maximum of {contest['max_team_size']} members.")
+            inst = conn.execute("SELECT id FROM institutions WHERE lower(name)=lower(?) OR lower(short_name)=lower(?)", (affiliation, affiliation)).fetchone() if affiliation else None
+            iid = inst["id"] if inst else None
+            approval = "PENDING" if contest["requires_approval"] else "APPROVED"
+            aid = pending.get("account_id")
+            if aid:
+                conn.execute("UPDATE accounts SET display_name=?,affiliation=?,department=?,college=?,year_level=?,institution_id=? WHERE id=? AND role='participant'",
+                             (display_name, affiliation, department, college, year_level, iid, aid))
+            else:
+                cur = conn.execute(
+                    "INSERT INTO accounts(username,email,password_hash,display_name,affiliation,department,college,year_level,institution_id,role,google_sub,created_at) VALUES(?,?,?,?,?,?,?,?,?, 'participant', ?, ?)",
+                    (_unique_username(conn, pending["email"]), pending["email"], generate_password_hash(secrets.token_hex(32)), display_name, affiliation, department, college, year_level, iid, pending["sub"], iso(utcnow())))
+                aid = cur.lastrowid
+            conn.execute("INSERT OR IGNORE INTO registrations(contest_id,account_id,team_api_id,team_name,approval_status,registration_status,coach_name,adviser_name) VALUES(?,?,?,?,?,?,?,?)",
+                         (contest["id"], aid, f"p-{aid}", team_name, approval, "REGISTERED", "", ""))
+            fx.audit(conn, "registration.google", contest_id=contest["id"], object_type="account", object_id=aid, detail=f"{display_name}; {pending['email']}; approval={approval}",
+                     actor={"id": aid, "display_name": display_name})
+            conn.commit()
+            session.clear(); session["user_id"] = aid
+            flash("Registration submitted and awaiting approval." if approval == "PENDING" else "You are registered. Good luck!", "success")
+            return redirect(url_for("dashboard"))
+        except ValueError as exc:
+            conn.rollback(); flash(str(exc), "danger")
     return render_template("google_complete.html", pending=pending, institutions=institutions)
 
 
@@ -1118,6 +1349,9 @@ def google_cancel():
 def signup():
     if current_user():
         return redirect(url_for("index"))
+    if google_login_config() and os.environ.get("INQUISITOR_PASSWORD_SIGNUP", "0") != "1":
+        flash("Students register by signing in with their ADNU Google account.", "success")
+        return redirect(url_for("login"))
     conn = get_db(); contest = active_contest(conn)
     if not contest:
         flash("No active contest is available for registration.", "danger")

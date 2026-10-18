@@ -170,6 +170,10 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     ]:
         _add_column(conn, "submissions", definition)
 
+    # Google sign-in: the stable Google account id (sub) of a student who signed in with ADNU Google.
+    _add_column(conn, "accounts", "google_sub TEXT")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_accounts_google_sub ON accounts(google_sub) WHERE google_sub IS NOT NULL")
+
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS institutions (

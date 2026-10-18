@@ -128,7 +128,7 @@ ${CAPS_WORKER}
 EOF
 cat > "$INQ_HOME/inq" <<EOF
 #!/usr/bin/env bash
-# inq up -d | down | ps | logs -f | restart | status | https-on | https-off | backup
+# inq up -d | down | ps | logs -f | restart | status | https-on | https-off | backup | google-setup | staff-url
 # (anything else is passed to docker compose)
 set -e
 HOME_DIR="$INQ_HOME"
@@ -139,6 +139,21 @@ case "\${1:-}" in
   https-on)  sed -i 's/^INQUISITOR_SECURE_COOKIES=.*/INQUISITOR_SECURE_COOKIES=1/' "\$HOME_DIR/.env"; dc up -d; echo "secure cookies ON (use this once the site is served over https)" ;;
   https-off) sed -i 's/^INQUISITOR_SECURE_COOKIES=.*/INQUISITOR_SECURE_COOKIES=0/' "\$HOME_DIR/.env"; dc up -d; echo "secure cookies OFF" ;;
   backup)    dc exec -T worker python manage.py backup ;;
+  staff-url) echo "Staff sign-in path (keep it private, bookmark it): \$(dc exec -T web python manage.py staff-path)" ;;
+  google-setup)
+    envfile="\$HOME_DIR/.env"
+    set_kv() { grep -v "^\$1=" "\$envfile" > "\$envfile.tmp" || true; printf '%s=%s\\n' "\$1" "\$2" >> "\$envfile.tmp"; mv "\$envfile.tmp" "\$envfile"; chmod 600 "\$envfile"; }
+    read -r -p "Google Client ID: " cid
+    read -r -s -p "Google Client secret (typing is hidden): " csec; echo
+    read -r -p "Public address of the site [https://inq.pel47.cc]: " pub; pub="\${pub:-https://inq.pel47.cc}"; pub="\${pub%/}"
+    if [ -z "\$cid" ] || [ -z "\$csec" ]; then echo "Both the Client ID and the Client secret are required."; exit 1; fi
+    set_kv INQUISITOR_GOOGLE_CLIENT_ID "\$cid"; set_kv INQUISITOR_GOOGLE_CLIENT_SECRET "\$csec"; set_kv INQUISITOR_PUBLIC_URL "\$pub"
+    grep -q '^INQUISITOR_GOOGLE_DOMAINS=' "\$envfile" || set_kv INQUISITOR_GOOGLE_DOMAINS "adnu.edu.ph,gbox.adnu.edu.ph"
+    dc up -d
+    for i in \$(seq 1 40); do curl -fsS "http://127.0.0.1:${HTTP_PORT}/healthz" >/dev/null 2>&1 && break; sleep 2; done
+    echo; echo "Google sign-in is ON. Students sign in at \$pub"
+    echo "Staff sign-in address (keep it private, bookmark it): \$pub\$(dc exec -T web python manage.py staff-path)"
+    echo "Password sign-in on the public page is now switched off." ;;
   *)         dc "\$@" ;;
 esac
 EOF

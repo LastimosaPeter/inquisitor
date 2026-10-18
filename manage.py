@@ -44,11 +44,15 @@ def check_command():
             conn.close()
 
 
+def staff_path_command():
+    print(app.staff_login_path())
+
+
 def main():
     parser = argparse.ArgumentParser(description="Inquisitor management utility")
-    parser.add_argument("command", choices=["init", "backup", "check"])
+    parser.add_argument("command", choices=["init", "backup", "check", "staff-path"])
     args = parser.parse_args()
-    {"init": init_command, "backup": backup_command, "check": check_command}[args.command]()
+    {"init": init_command, "backup": backup_command, "check": check_command, "staff-path": staff_path_command}[args.command]()
 
 
 if __name__ == "__main__":

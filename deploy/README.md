@@ -85,6 +85,25 @@ rm -rf ~/inquisitor/data
 ~/inquisitor/inq up -d
 ```
 
+## Sign in with Google (ADNU accounts)
+
+Students sign in with their ADNU Google account (`@adnu.edu.ph` or `@gbox.adnu.edu.ph`) and fill in a short form the first time.
+Their contest account is created automatically while registration is open. Only addresses on the allowed domains get in.
+
+1. In Google Cloud (`console.cloud.google.com`), open **Google Auth Platform** and create an **OAuth client** of type **Web application**.
+   Add this **Authorized redirect URI** (use your own address if it differs):
+   `https://inq.pel47.cc/auth/google/callback`
+2. On the server, run the helper. It asks for the Client ID, the Client secret (typing is hidden) and the site address:
+   ```bash
+   ~/inquisitor/inq google-setup
+   ```
+   It turns Google sign-in on, switches the password form off on the public page, and prints the **staff sign-in address**.
+3. Directors and judges sign in at that hidden staff address (username and password). It is long and random on purpose.
+   Bookmark it, and print it again any time with `~/inquisitor/inq staff-url`. Don't share it.
+
+Turn it off again by removing the `INQUISITOR_GOOGLE_CLIENT_ID` line from `~/inquisitor/.env` and running `~/inquisitor/inq up -d`.
+Never put the Client secret in chat, email or the repository. If it leaks, add a new secret in Google Cloud, delete the old one, and run `inq google-setup` again.
+
 ## Putting it on the internet (Cloudflare Tunnel)
 
 The site listens on port 8080 of this machine. A tunnel connects a public address to it, so no router ports are opened.
