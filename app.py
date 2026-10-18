@@ -969,6 +969,20 @@ def localdt(value):
     return dt.astimezone(PHT).strftime("%b %d, %Y · %I:%M %p")
 
 
+def google_login_config():
+    """Google sign-in settings, or None when it is not configured (INQUISITOR_GOOGLE_CLIENT_ID unset).
+
+    Only Google accounts whose email is on one of the allowed domains can register or sign in
+    (INQUISITOR_GOOGLE_DOMAINS, comma separated; default adnu.edu.ph and gbox.adnu.edu.ph).
+    """
+    client_id = os.environ.get("INQUISITOR_GOOGLE_CLIENT_ID", "").strip()
+    if not client_id:
+        return None
+    raw = os.environ.get("INQUISITOR_GOOGLE_DOMAINS", "adnu.edu.ph,gbox.adnu.edu.ph")
+    domains = [d.strip().lower().lstrip("@") for d in raw.split(",") if d.strip()]
+    return {"client_id": client_id, "domains": domains}
+
+
 @app.context_processor
 def inject_globals():
     me = current_user()
@@ -982,6 +996,8 @@ def inject_globals():
         "cstate": contest_state(contest) if contest else None,
         "languages": LANGUAGES,
         "compiler_status": compiler_status(),
+        "google_login": google_login_config(),
+        "demo_mode": os.environ.get("INQUISITOR_DEMO_ACCOUNTS", "1") != "0",
         "version": "v1.0.8",
         "release_name": "Galahad",
         "csrf_token": session["csrf_token"],
@@ -1055,7 +1071,7 @@ def login():
         LOGIN_ATTEMPTS[client]=attempts
         if len(attempts)>=LOGIN_MAX_FAILURES:
             flash("Too many failed sign-in attempts. Try again in a few minutes.", "danger")
-            return render_template("login.html"), 429
+            return render_template("login.html", staff_open=True), 429
         username = request.form.get("username", "").strip().lower()
         password = request.form.get("password", "")
         user = get_db().execute("SELECT * FROM accounts WHERE username=? OR email=?", (username, username)).fetchone()
@@ -1070,7 +1086,32 @@ def login():
             return redirect(url_for("index"))
         attempts.append(now_ts); LOGIN_ATTEMPTS[client]=attempts
         flash("Invalid username or password.", "danger")
+        return render_template("login.html", staff_open=True)
     return render_template("login.html")
+
+
+# ---- Google sign-in (ADNU accounts) -- DESIGN PREVIEW: the pages render, the Google exchange is not connected yet ----
+@app.get("/auth/google")
+def google_login():
+    flash("Google sign-in is not connected yet.", "danger")
+    return redirect(url_for("login"))
+
+
+@app.route("/auth/google/complete", methods=["GET", "POST"])
+def google_complete():
+    pending = session.get("google_pending")
+    if not pending:
+        return redirect(url_for("login"))
+    if request.method == "POST":
+        flash("Google sign-in is not connected yet.", "danger")
+    institutions = get_db().execute("SELECT * FROM institutions WHERE active=1 ORDER BY name").fetchall()
+    return render_template("google_complete.html", pending=pending, institutions=institutions)
+
+
+@app.get("/auth/google/cancel")
+def google_cancel():
+    session.pop("google_pending", None)
+    return redirect(url_for("login"))
 
 
 @app.route("/signup", methods=["GET", "POST"])

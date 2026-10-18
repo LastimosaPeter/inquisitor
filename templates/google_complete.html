@@ -1,0 +1,36 @@
+{% extends 'base.html' %}
+{% block title %}Finish registration{% endblock %}
+{% block page_title %}Finish registration{% endblock %}
+{% block content %}
+<section class="card auth-card signin-card signin-card-wide">
+  <div class="login-brand">
+    <img class="login-logo login-wordmark" src="{{ url_for('static', filename='inquisitor_logo_white.png') }}" alt="Inquisitor">
+  </div>
+  <div class="signin-block">
+    <span class="eyebrow">One more step</span>
+    <h2 class="signin-title">Welcome, {{ pending['name'] }}</h2>
+    <div class="identity-chip">
+      <span class="identity-avatar">{{ (pending['name'] or pending['email'])[:1]|upper }}</span>
+      <span class="identity-email">{{ pending['email'] }}</span>
+      <a href="{{ url_for('google_cancel') }}">Not you?</a>
+    </div>
+  </div>
+  {% if contest and contest['eligibility_note'] %}<div class="notice"><strong>Eligibility</strong><br>{{ contest['eligibility_note'] }}</div>{% endif %}
+  <form method="post" class="form-stack">
+    <label>Full name<input name="display_name" value="{{ request.form.get('display_name', pending['name']) }}" autocomplete="name" required></label>
+    <div class="form-row">
+      <label>Department / program<input name="department" value="{{ request.form.get('department','') }}" placeholder="Computer Science" required autofocus></label>
+      <label><span>College <small class="muted">(optional)</small></span><input name="college" value="{{ request.form.get('college','') }}" placeholder="College of Computer Studies"></label>
+    </div>
+    <div class="form-row">
+      <label><span>Year level <small class="muted">(optional)</small></span><input name="year_level" value="{{ request.form.get('year_level','') }}" list="year-levels" placeholder="3rd Year"><datalist id="year-levels"><option value="1st Year"><option value="2nd Year"><option value="3rd Year"><option value="4th Year"><option value="5th Year"><option value="Graduate"></datalist></label>
+      <label>School<input name="affiliation" value="{{ request.form.get('affiliation','Ateneo de Naga University') }}" list="institution-list"><datalist id="institution-list">{% for i in institutions %}<option value="{{ i['name'] }}">{% endfor %}</datalist></label>
+    </div>
+    {% if contest and contest['competition_mode']=='team' %}<label>Team name<input name="team_name" value="{{ request.form.get('team_name','') }}" placeholder="Use the exact same name as your teammates"><small class="muted">Maximum {{ contest['max_team_size'] }} members.</small></label>{% endif %}
+    {% if contest and contest['requires_approval'] %}<div class="notice subtle">Your registration will wait for approval by contest staff.</div>{% endif %}
+    <button class="button wide" type="submit">Finish and register</button>
+  </form>
+  <p class="auth-help">Your name and email come from your Google account. You will sign in with Google every time, so there is no password to remember.</p>
+  <div class="auth-platform-tagline">The Official Contest Management Platform of TACTICS x ACPC 2026</div>
+</section>
+{% endblock %}
