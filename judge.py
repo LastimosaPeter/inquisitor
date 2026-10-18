@@ -101,7 +101,12 @@ def _docker_commands(language: str):
 
 
 OUTPUT_CAP_BYTES = 1024 * 1024
-COMPILE_MEMORY_MB = 1536
+def _compile_memory_mb() -> int:
+    """Memory allowed to a compile step (INQUISITOR_JUDGE_COMPILE_MEMORY_MB). javac/kotlinc/rustc need more than a typical run."""
+    try:
+        return max(256, int(os.environ.get("INQUISITOR_JUDGE_COMPILE_MEMORY_MB", "1536")))
+    except ValueError:
+        return 1536
 
 
 def _docker_base(work: Path, memory_mb: int, name: str, pids: int = 64) -> list[str]:
@@ -183,7 +188,7 @@ def _judge_docker(*, language: str, source: str, tests_dir: Path, time_limit_ms:
         work=Path(tmp); os.chmod(work,0o777); filename, compile_cmd, run_cmd=_docker_commands(language); src_path=(work/filename); src_path.write_text(source,encoding="utf-8"); os.chmod(src_path,0o666)
         if compile_cmd:
             name=_container_name()
-            cmd=_docker_base(work,max(memory_limit_mb,COMPILE_MEMORY_MB),name,pids=512)+["bash","-lc",compile_cmd]
+            cmd=_docker_base(work,max(memory_limit_mb,_compile_memory_mb()),name,pids=512)+["bash","-lc",compile_cmd]
             rc,out,err,timed_out,overflow=_run_container(cmd,name,"",45)
             if timed_out: return {"verdict":"CE","runtime_ms":None,"detail":"Compilation exceeded 45 seconds."}
             if rc!=0: return {"verdict":"CE","runtime_ms":None,"detail":((err or out or "Compilation failed.")[-6000:])}
