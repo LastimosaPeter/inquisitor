@@ -105,6 +105,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         "require_checkin INTEGER NOT NULL DEFAULT 0",
         "custom_scoring_note TEXT NOT NULL DEFAULT ''",
         "submissions_open INTEGER NOT NULL DEFAULT 1",
+        "allowed_emails TEXT NOT NULL DEFAULT ''",
+        "open_entry INTEGER NOT NULL DEFAULT 0",
         "paused_at TEXT",
         "pause_accumulated_seconds INTEGER NOT NULL DEFAULT 0",
         "practice_mode INTEGER NOT NULL DEFAULT 0",

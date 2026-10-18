@@ -1157,6 +1157,26 @@ def registration_is_closed(contest) -> bool:
                 or contest["lifecycle_phase"] in {"registration_closed", "running", "ended", "finalized", "archived"})
 
 
+def parse_allowed_emails(raw: str, open_entry: bool = False) -> str:
+    """Validate the 'only these emails may register' list: ADNU addresses, or any address when the contest is open to non-Ateneo entrants."""
+    emails = fx.parse_email_list(raw)
+    domains = (google_login_config() or {}).get("domains") or ["adnu.edu.ph", "gbox.adnu.edu.ph"]
+    bad = [e for e in emails if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", e) or (not open_entry and e.rpartition("@")[2] not in domains)]
+    if bad:
+        raise ValueError(("These are not valid email addresses: " if open_entry else "These are not ADNU email addresses (" + ", ".join("@" + d for d in domains) + ") so they cannot be on the contestant list unless the contest is open to non-Ateneo entrants: ") + ", ".join(bad[:8]) + ". Nothing was saved.")
+    return "\n".join(emails)
+
+
+def contestant_email_allowed(contest, email: str) -> bool:
+    """An empty list means any ADNU account may register; otherwise only listed emails may."""
+    listed = fx.parse_email_list(contest["allowed_emails"] if "allowed_emails" in contest.keys() else "")
+    return not listed or email.strip().lower() in listed
+
+
+def _not_listed_message(email: str) -> str:
+    return f"Registration for this contest is limited to a list of students and {email} is not on it. Ask the organizers to add it."
+
+
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
@@ -1192,8 +1212,11 @@ def _jwt_claims(token: str) -> dict:
     return json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
 
 
-def _check_google_claims(cfg, claims: dict, nonce: str) -> str | None:
-    """Return None when the ID token is acceptable, otherwise a message for the student."""
+def _check_google_claims(cfg, claims: dict, nonce: str, allow_external: bool = False) -> str | None:
+    """Return None when the ID token is acceptable, otherwise a message for the student.
+
+    allow_external is True only while the active contest is open to non-Ateneo participants (any verified Google account).
+    """
     if claims.get("iss") not in GOOGLE_ISSUERS:
         return "Google sign-in could not be verified. Please try again."
     aud = claims.get("aud")
@@ -1209,6 +1232,8 @@ def _check_google_claims(cfg, claims: dict, nonce: str) -> str | None:
     email = str(claims.get("email", "")).strip().lower()
     if not claims.get("sub") or not email or claims.get("email_verified") not in (True, "true"):
         return "Google sign-in could not be verified. Please try again."
+    if allow_external:
+        return None
     domain = email.rpartition("@")[2]
     hosted = str(claims.get("hd", "")).strip().lower()
     # Both the address and Google's hosted-domain claim must be ADNU: a personal Gmail account has no hd claim.
@@ -1265,12 +1290,12 @@ def google_callback():
     except Exception as exc:                            # network, bad response, malformed token
         print("Google sign-in failed:", repr(exc), flush=True)
         return _google_fail("Could not complete sign-in with Google. Please try again.")
-    problem = _check_google_claims(cfg, claims, saved["nonce"])
+    conn = get_db(); contest = active_contest(conn)
+    problem = _check_google_claims(cfg, claims, saved["nonce"], allow_external=bool(contest and contest["open_entry"]))
     if problem:
         return _google_fail(problem)
     email, sub = str(claims["email"]).strip().lower(), str(claims["sub"])
     name = str(claims.get("name") or email.split("@")[0]).strip()[:120]
-    conn = get_db(); contest = active_contest(conn)
     account = conn.execute("SELECT * FROM accounts WHERE google_sub=?", (sub,)).fetchone()
     if not account:
         account = conn.execute("SELECT * FROM accounts WHERE lower(email)=? OR lower(alt_email)=? ORDER BY id LIMIT 1", (email, email)).fetchone()
@@ -1291,6 +1316,8 @@ def google_callback():
             conn.execute("UPDATE accounts SET google_sub=? WHERE id=?", (sub, account["id"])); conn.commit()
         registered = participant_registered(contest["id"], account["id"], conn) if contest else True
         if not registered and contest and not registration_is_closed(contest):
+            if not contestant_email_allowed(contest, email):
+                return _google_fail(_not_listed_message(email))
             session.clear()
             session["google_pending"] = {"sub": sub, "email": email, "name": account["display_name"] or name, "account_id": account["id"], "at": time.time()}
             return redirect(url_for("google_complete"))
@@ -1301,6 +1328,8 @@ def google_callback():
         return _google_fail("No contest is open for registration yet.")
     if registration_is_closed(contest):
         return _google_fail("Registration is closed. Only students who registered earlier can sign in.")
+    if not contestant_email_allowed(contest, email):
+        return _google_fail(_not_listed_message(email))
     session.clear()
     session["google_pending"] = {"sub": sub, "email": email, "name": name, "at": time.time()}
     return redirect(url_for("google_complete"))
@@ -1319,6 +1348,9 @@ def google_complete():
     if not contest or registration_is_closed(contest):
         session.pop("google_pending", None)
         return _google_fail("Registration is closed. Only students who registered earlier can sign in.")
+    if not contestant_email_allowed(contest, pending["email"]):
+        session.pop("google_pending", None)
+        return _google_fail(_not_listed_message(pending["email"]))
     institutions = conn.execute("SELECT * FROM institutions WHERE active=1 ORDER BY name").fetchall()
     if request.method == "POST":
         f = request.form
@@ -1960,6 +1992,8 @@ def admin_contests():
             bad_emails = [e for e in staff_entries if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", e) or e.rpartition("@")[2] not in allowed_domains]
             if bad_emails:
                 raise ValueError("These are not ADNU email addresses (" + ", ".join("@" + d for d in allowed_domains) + "): " + ", ".join(bad_emails[:8]) + ". Nothing was saved.")
+            open_entry = 1 if request.form.get("open_entry") == "on" else 0
+            allowed_emails = parse_allowed_emails(request.form.get("allowed_emails", ""), bool(open_entry))
             if make_active:
                 conn.execute("UPDATE contests SET active=0")
             conn.execute(
@@ -1979,6 +2013,7 @@ def admin_contests():
                  request.form.get("registration_instruction","").strip())
             )
             conn.execute("UPDATE contests SET rules_text=?,organizer_text=? WHERE id=?",(request.form.get("rules_text","").strip(),request.form.get("organizer_text","TACTICS x Department of Computer Science, Ateneo de Naga University").strip(),cid))
+            conn.execute("UPDATE contests SET allowed_emails=?, open_entry=? WHERE id=?", (allowed_emails, open_entry, cid))
             contest = contest_by_id(cid, conn)
             append_event(conn, cid, "contest", None, api_contest(contest))
             fx.audit(conn,"contest.create",contest_id=cid,object_type="contest",object_id=cid,detail=name)
@@ -2027,6 +2062,10 @@ def admin_update_contest(cid):
         conn.execute("""UPDATE contests SET name=?,formal_name=?,location=?,start_at=?,duration_minutes=?,freeze_minutes=?,penalty_minutes=?,competition_mode=?,signup_open=?,projector_autoscroll=?,scope=?,scoring_model=?,lifecycle_phase=?,registration_start=?,registration_end=?,eligibility_note=?,allowed_departments=?,allowed_colleges=?,allowed_institutions=?,allowed_year_levels=?,max_team_size=?,requires_approval=?,require_checkin=?,custom_scoring_note=?,submissions_open=?,practice_mode=?,registration_instruction=? WHERE id=?""",
             (name,formal,location,start_at,duration,freeze,penalty,competition_mode,1 if request.form.get("signup_open")=="on" else 0,1 if request.form.get("projector_autoscroll")=="on" else 0,scope,scoring,phase,reg_start,reg_end,request.form.get("eligibility_note",c["eligibility_note"]).strip(),request.form.get("allowed_departments",c["allowed_departments"]).strip(),request.form.get("allowed_colleges",c["allowed_colleges"]).strip(),request.form.get("allowed_institutions",c["allowed_institutions"]).strip(),request.form.get("allowed_year_levels",c["allowed_year_levels"]).strip(),max(1,min(20,int(request.form.get("max_team_size",c["max_team_size"])))),1 if request.form.get("requires_approval")=="on" else 0,1 if request.form.get("require_checkin")=="on" else 0,request.form.get("custom_scoring_note",c["custom_scoring_note"]).strip(),1 if request.form.get("submissions_open")=="on" else 0,1 if phase=="practice" else 0,request.form.get("registration_instruction",c["registration_instruction"]).strip(),cid))
         conn.execute("UPDATE contests SET rules_text=?,organizer_text=? WHERE id=?",(request.form.get("rules_text",c["rules_text"]).strip(),request.form.get("organizer_text",c["organizer_text"]).strip(),cid))
+        open_entry = 1 if request.form.get("open_entry") == "on" else 0
+        if "allowed_emails" in request.form or "open_entry" in request.form or "signup_open" in request.form:
+            list_raw = request.form.get("allowed_emails", c["allowed_emails"])
+            conn.execute("UPDATE contests SET allowed_emails=?, open_entry=? WHERE id=?", (parse_allowed_emails(list_raw, bool(open_entry)), open_entry, cid))
         updated=contest_by_id(cid,conn); append_event(conn,cid,"contest",None,api_contest(updated)); fx.audit(conn,"contest.update",contest_id=cid,object_type="contest",object_id=cid,detail=name); conn.commit(); flash("Contest settings updated.","success")
     except (ValueError,sqlite3.IntegrityError) as exc:
         conn.rollback(); flash(str(exc),"danger")

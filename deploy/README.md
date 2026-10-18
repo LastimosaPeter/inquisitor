@@ -114,6 +114,15 @@ contestant pages. Only people on the **staff list** get staff pages, and each la
   ```
   Roles: `director`, `chief_judge`, `judge`, `problem_setter`, `technical_admin`, `registration_staff`, `spectator`.
 
+**Contest form options** (director pages, **Contests**, when creating or editing a contest):
+- **Staff for this contest:** ADNU emails of chief judges, judges, problem setters and registration staff, one per line (commas also work).
+- **Allowed contestants:** optional list of ADNU emails. Blank means any ADNU account can register while registration is open; with a list, only
+  those emails can register. Students who already registered keep their access, and staff are never blocked by the list.
+- **Open entry:** off by default, so only ADNU accounts can sign in. Switch it on for a contest that welcomes non-Ateneo participants: any
+  verified Google account can then register (personal Gmail included), and the contestant list may contain any email. Control who gets in with
+  **Require staff approval** or the contestant list. Keep it on for the whole contest, because outside participants can only sign in while it is on.
+  Directors and judges are always ADNU emails.
+
 Staff roles other than director belong to the active contest; add them again for a new contest.
 If a contestant is added to the staff list later, the same account becomes staff (no duplicate).
 
