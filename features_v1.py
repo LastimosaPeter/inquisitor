@@ -401,6 +401,35 @@ def _staff_permission(permission: str):
     return deco
 
 
+def parse_email_list(text: str) -> list[str]:
+    """Emails separated by new lines (or commas / semicolons / spaces), lower-cased, duplicates removed in order."""
+    seen, out = set(), []
+    for item in re.split(r"[\s,;]+", text or ""):
+        item = item.strip().strip("<>").lower()
+        if item and item not in seen:
+            seen.add(item); out.append(item)
+    return out
+
+
+def whitelist_staff(conn, core, contest_id: str, email: str, staff_role: str) -> str:
+    """Put `email` on a contest's staff list. They sign in with Google (no password). Returns 'director', 'created' or 'updated'."""
+    existing = conn.execute("SELECT * FROM accounts WHERE lower(email)=? OR lower(alt_email)=? ORDER BY id LIMIT 1", (email, email)).fetchone()
+    if existing and existing["role"] == "admin":
+        return "director"
+    if existing:
+        account_id, outcome = existing["id"], "updated"
+        conn.execute("UPDATE accounts SET role='judge' WHERE id=?", (account_id,))
+    else:
+        username = core._unique_username(conn, email)
+        cur = conn.execute("INSERT INTO accounts(username,email,password_hash,display_name,affiliation,role,created_at) VALUES(?,?,?,?,?,?,?)",
+                           (username, email, generate_password_hash(secrets.token_hex(32)), username, "TACTICS x ACPC", "judge", core.iso(core.utcnow())))
+        account_id, outcome = cur.lastrowid, "created"
+    conn.execute("DELETE FROM staff_assignments WHERE contest_id=? AND account_id=?", (contest_id, account_id))
+    conn.execute("INSERT INTO staff_assignments(contest_id,account_id,staff_role,created_at) VALUES(?,?,?,?)", (contest_id, account_id, staff_role, core.iso(core.utcnow())))
+    audit(conn, "staff.create", contest_id=contest_id, object_type="account", object_id=account_id, detail=f"{email} - {STAFF_ROLES[staff_role]} (from contest form)")
+    return outcome
+
+
 def staff_can(permission: str) -> bool:
     """True if the signed-in user holds `permission` (admins and Contest Directors hold everything)."""
     core = _core(); me = core.current_user()

@@ -10,6 +10,7 @@ import re
 import secrets
 import sqlite3
 import shutil
+import sys
 import threading
 import time
 import urllib.error
@@ -1950,6 +1951,15 @@ def admin_contests():
             reg_end = local_input_to_utc(request.form.get("registration_end", "").strip()) if request.form.get("registration_end", "").strip() else None
             make_active = request.form.get("make_active") == "on"
             max_team_size = max(1, min(20, int(request.form.get("max_team_size", "3"))))
+            # Staff lists (ADNU emails): one box per role; first role wins if an email is listed twice.
+            staff_entries: dict[str, str] = {}
+            for field, role in (("staff_chief_judges", "chief_judge"), ("staff_judges", "judge"), ("staff_problem_setters", "problem_setter"), ("staff_registration", "registration_staff")):
+                for email in fx.parse_email_list(request.form.get(field, "")):
+                    staff_entries.setdefault(email, role)
+            allowed_domains = (google_login_config() or {}).get("domains") or ["adnu.edu.ph", "gbox.adnu.edu.ph"]
+            bad_emails = [e for e in staff_entries if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", e) or e.rpartition("@")[2] not in allowed_domains]
+            if bad_emails:
+                raise ValueError("These are not ADNU email addresses (" + ", ".join("@" + d for d in allowed_domains) + "): " + ", ".join(bad_emails[:8]) + ". Nothing was saved.")
             if make_active:
                 conn.execute("UPDATE contests SET active=0")
             conn.execute(
@@ -1972,8 +1982,12 @@ def admin_contests():
             contest = contest_by_id(cid, conn)
             append_event(conn, cid, "contest", None, api_contest(contest))
             fx.audit(conn,"contest.create",contest_id=cid,object_type="contest",object_id=cid,detail=name)
+            staff_done = {"created": 0, "updated": 0, "director": 0}
+            for email, role in staff_entries.items():
+                staff_done[fx.whitelist_staff(conn, sys.modules[__name__], cid, email, role)] += 1
             conn.commit()
-            flash(f"Contest '{name}' created.", "success")
+            extra = f" {len(staff_entries) - staff_done['director']} staff added by email." if staff_entries else ""
+            flash(f"Contest '{name}' created.{extra}", "success")
             return redirect(url_for("admin_contests"))
         except (ValueError, sqlite3.IntegrityError) as exc:
             conn.rollback(); flash(str(exc), "danger")
