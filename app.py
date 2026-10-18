@@ -1433,7 +1433,7 @@ def change_password():
 @app.route("/logout")
 def logout():
     session.clear()
-    return redirect(url_for("leaderboard"))
+    return redirect(url_for("index"))      # the sign-in page when Google sign-in is on, otherwise the leaderboard as before
 
 
 @app.route("/dashboard")
