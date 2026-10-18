@@ -1261,9 +1261,19 @@ def google_callback():
     conn = get_db(); contest = active_contest(conn)
     account = conn.execute("SELECT * FROM accounts WHERE google_sub=?", (sub,)).fetchone()
     if not account:
-        account = conn.execute("SELECT * FROM accounts WHERE lower(email)=? ORDER BY id LIMIT 1", (email,)).fetchone()
+        account = conn.execute("SELECT * FROM accounts WHERE lower(email)=? OR lower(alt_email)=? ORDER BY id LIMIT 1", (email, email)).fetchone()
+    if account and account["role"] in ("admin", "judge"):
+        # Directors and judges: a Google account that is verified to own the address on file signs in directly
+        # (the registration window does not apply to staff). The name is taken from Google the first time.
+        first_link = not account["google_sub"]
+        conn.execute("UPDATE accounts SET google_sub=COALESCE(google_sub,?), display_name=CASE WHEN ? THEN ? ELSE display_name END WHERE id=?", (sub, 1 if first_link else 0, name, account["id"]))
+        session.clear(); session["user_id"] = account["id"]
+        fx.audit(conn, "auth.google_staff", contest_id=contest["id"] if contest else None, object_type="account", object_id=account["id"], detail=f"{email} signed in with Google", actor=account)
+        conn.commit()
+        flash("Welcome, " + (name if first_link else account["display_name"]) + ".", "success")
+        return redirect(url_for("index"))
     if account and account["role"] != "participant":
-        return _google_fail("Directors and judges sign in with the staff sign-in page.")
+        return _google_fail("This account cannot sign in with Google.")
     if account:
         if not account["google_sub"]:
             conn.execute("UPDATE accounts SET google_sub=? WHERE id=?", (sub, account["id"])); conn.commit()

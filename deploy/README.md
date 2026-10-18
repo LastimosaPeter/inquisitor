@@ -101,6 +101,16 @@ Their contest account is created automatically while registration is open. Only 
 3. Directors and judges sign in at that hidden staff address (username and password). It is long and random on purpose.
    Bookmark it, and print it again any time with `~/inquisitor/inq staff-url`. Don't share it.
 
+Make a director or judge who signs in with Google (their account must exist first; this creates it):
+
+```bash
+~/inquisitor/inq add-director name@adnu.edu.ph                       # one address
+~/inquisitor/inq add-director name@gbox.adnu.edu.ph name@adnu.edu.ph  # either address signs in as the same person
+```
+
+They then open the normal sign-in page and use **Continue with Google**; their name is filled in from Google the first time.
+(Students are different: they register themselves while registration is open.)
+
 Turn it off again by removing the `INQUISITOR_GOOGLE_CLIENT_ID` line from `~/inquisitor/.env` and running `~/inquisitor/inq up -d`.
 Never put the Client secret in chat, email or the repository. If it leaks, add a new secret in Google Cloud, delete the old one, and run `inq google-setup` again.
 

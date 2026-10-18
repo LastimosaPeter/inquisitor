@@ -128,7 +128,7 @@ ${CAPS_WORKER}
 EOF
 cat > "$INQ_HOME/inq" <<EOF
 #!/usr/bin/env bash
-# inq up -d | down | ps | logs -f | restart | status | https-on | https-off | backup | google-setup | staff-url
+# inq up -d | down | ps | logs -f | restart | status | https-on | https-off | backup | google-setup | staff-url | add-director
 # (anything else is passed to docker compose)
 set -e
 HOME_DIR="$INQ_HOME"
@@ -139,6 +139,9 @@ case "\${1:-}" in
   https-on)  sed -i 's/^INQUISITOR_SECURE_COOKIES=.*/INQUISITOR_SECURE_COOKIES=1/' "\$HOME_DIR/.env"; dc up -d; echo "secure cookies ON (use this once the site is served over https)" ;;
   https-off) sed -i 's/^INQUISITOR_SECURE_COOKIES=.*/INQUISITOR_SECURE_COOKIES=0/' "\$HOME_DIR/.env"; dc up -d; echo "secure cookies OFF" ;;
   backup)    dc exec -T worker python manage.py backup ;;
+  add-director)
+    [ -n "\${2:-}" ] || { echo "Usage: inq add-director EMAIL [SECOND_EMAIL]"; exit 1; }
+    dc exec -T web python manage.py add-director --email "\$2" \${3:+--also "\$3"} ;;
   staff-url) echo "Staff sign-in path (keep it private, bookmark it): \$(dc exec -T web python manage.py staff-path)" ;;
   google-setup)
     envfile="\$HOME_DIR/.env"
