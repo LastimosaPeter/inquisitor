@@ -273,3 +273,8 @@ main{padding-top:26px}.topbar{padding-bottom:18px;margin-bottom:24px}.topbar:aft
 .signin-card .form-stack{margin-top:18px}
 .signin-card .form-stack+.auth-help{margin-top:14px}
 .signin-card label small{display:inline;margin-left:4px;font-weight:400}
+
+/* math in statements */
+.math-preview{display:grid;gap:6px;margin-top:2px}.math-preview .statement{border:1px dashed var(--line);border-radius:7px;padding:8px 12px;min-height:2.2em}
+.statement .katex{font-size:1.08em}.statement .katex-display{margin:.8em 0;overflow-x:auto;overflow-y:hidden}
+.statement .katex-error{color:#ef6b70}

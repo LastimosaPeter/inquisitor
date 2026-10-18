@@ -129,6 +129,13 @@ If a contestant is added to the staff list later, the same account becomes staff
 Turn it off again by removing the `INQUISITOR_GOOGLE_CLIENT_ID` line from `~/inquisitor/.env` and running `~/inquisitor/inq up -d`.
 Never put the Client secret in chat, email or the repository. If it leaks, add a new secret in Google Cloud, delete the old one, and run `inq google-setup` again.
 
+## Math in problem statements
+
+Problem statements accept LaTeX. Write `$x^2$` for a formula inside a sentence, and `$$\sum_{i=1}^{n} a_i$$` (or `\[ ... \]`) for a formula on its own line.
+Type `\$` for a literal dollar sign. Sample input and output are never treated as math. The problem editor shows a live preview under the statement box.
+The math library (KaTeX) is bundled with the site, so contestants' computers do not need internet access. An unfinished formula such as `$x` is left as typed,
+and a formula with a mistake is shown in red instead of breaking the page.
+
 ## Putting it on the internet (Cloudflare Tunnel)
 
 The site listens on port 8080 of this machine. A tunnel connects a public address to it, so no router ports are opened.

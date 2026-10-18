@@ -1,6 +1,7 @@
 {% extends 'base.html' %}
 {% block title %}Problems{% endblock %}
 {% block page_title %}Problems{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="{{ url_for('static', filename='katex/katex.min.css') }}">{% endblock %}
 {% block content %}
 <div class="grid one-two">
 <section class="stack">
@@ -58,3 +59,17 @@
 </section>
 </div>
 {% endblock %}
+{% block scripts %}{% include '_math_scripts.html' %}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('textarea.statement-editor').forEach(function (ta) {
+    var box = document.createElement('div'); box.className = 'math-preview';
+    box.innerHTML = '<small class="muted">Preview. Write math in LaTeX: $x^2$ inline, $$\\sum_{i=1}^{n} a_i$$ on its own line, \\$ for a dollar sign.</small><div class="statement"><p class="math-source"></p></div>';
+    ta.closest('label').insertAdjacentElement('afterend', box);
+    var out = box.querySelector('.math-source'), timer = null;
+    function update() { out.textContent = ta.value || ' '; window.renderStatementMath(out); }
+    ta.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(update, 250); });
+    update();
+  });
+});
+</script>{% endblock %}
