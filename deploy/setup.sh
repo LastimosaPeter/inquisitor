@@ -3,7 +3,7 @@
 #
 #   bash setup.sh
 #
-# Optional settings (environment variables):
+# Optional settings (environment variables; remembered in $INQ_HOME/install.conf after the first run):
 #   INQ_HOME=$HOME/inquisitor      where everything lives
 #   INQ_BRANCH=judging-workflow    git branch to deploy
 #   INQ_HTTP_PORT=8080             port the site listens on
@@ -15,14 +15,31 @@
 set -euo pipefail
 
 INQ_HOME="${INQ_HOME:-$HOME/inquisitor}"
-BRANCH="${INQ_BRANCH:-judging-workflow}"
-REPO_URL="${INQ_REPO:-https://github.com/LastimosaPeter/inquisitor.git}"
-HTTP_PORT="${INQ_HTTP_PORT:-8080}"
-BIND_ADDR="${INQ_BIND_ADDR:-0.0.0.0}"
-PROFILE="${INQ_PROFILE:-dedicated}"
+# Install settings are remembered in $INQ_HOME/install.conf, so a plain re-run (or "inq update") keeps the profile, port and
+# address from the first install. A setting you give on the command line wins, and is remembered from then on.
+CONF="$INQ_HOME/install.conf"
+saved() { [ -f "$CONF" ] && sed -n "s/^$1=//p" "$CONF" | tail -1 || true; }
+pick() { local v="${!1:-}"; [ -n "$v" ] || v="$(saved "$1")"; printf '%s' "${v:-$2}"; }
+BRANCH="$(pick INQ_BRANCH judging-workflow)"
+REPO_URL="$(pick INQ_REPO https://github.com/LastimosaPeter/inquisitor.git)"
+HTTP_PORT="$(pick INQ_HTTP_PORT 8080)"
+BIND_ADDR="$(pick INQ_BIND_ADDR 0.0.0.0)"
+PROFILE="$(pick INQ_PROFILE dedicated)"
+PROJECT="$(pick INQ_PROJECT inquisitor)"
 case "$PROFILE" in dedicated|shared) ;; *) echo "INQ_PROFILE must be dedicated or shared"; exit 1 ;; esac
-if [ "$PROFILE" = "shared" ]; then WORKERS="${INQ_JUDGE_WORKERS:-2}"; else WORKERS="${INQ_JUDGE_WORKERS:-3}"; fi
-PROJECT="${INQ_PROJECT:-inquisitor}"
+if [ "$PROFILE" = "shared" ]; then DEF_WORKERS=2; else DEF_WORKERS=3; fi
+WORKERS="$(pick INQ_JUDGE_WORKERS "$DEF_WORKERS")"
+mkdir -p "$INQ_HOME"
+cat > "$CONF" <<CONFEND
+# Remembered by setup.sh. Edit it, or override with environment variables (INQ_PROFILE=... bash setup.sh).
+INQ_BRANCH=$BRANCH
+INQ_REPO=$REPO_URL
+INQ_HTTP_PORT=$HTTP_PORT
+INQ_BIND_ADDR=$BIND_ADDR
+INQ_PROFILE=$PROFILE
+INQ_PROJECT=$PROJECT
+INQ_JUDGE_WORKERS=$WORKERS
+CONFEND
 
 say() { printf '\n==> %s\n' "$*"; }
 die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
@@ -128,7 +145,7 @@ ${CAPS_WORKER}
 EOF
 cat > "$INQ_HOME/inq" <<EOF
 #!/usr/bin/env bash
-# inq up -d | down | ps | logs -f | restart | status | https-on | https-off | backup | google-setup | staff-url | add-director | add-staff | watch | stats
+# inq up -d | down | ps | logs -f | restart | status | preflight | update | workers N | new-contest | https-on | https-off | backup | google-setup | staff-url | add-director | add-staff | watch | stats
 # (anything else is passed to docker compose)
 set -e
 HOME_DIR="$INQ_HOME"
@@ -138,6 +155,17 @@ case "\${1:-}" in
   status)    dc ps; echo; curl -fsS "http://127.0.0.1:${HTTP_PORT}/healthz" && echo " <- web is healthy" ;;
   https-on)  sed -i 's/^INQUISITOR_SECURE_COOKIES=.*/INQUISITOR_SECURE_COOKIES=1/' "\$HOME_DIR/.env"; dc up -d; echo "secure cookies ON (use this once the site is served over https)" ;;
   https-off) sed -i 's/^INQUISITOR_SECURE_COOKIES=.*/INQUISITOR_SECURE_COOKIES=0/' "\$HOME_DIR/.env"; dc up -d; echo "secure cookies OFF" ;;
+  preflight) dc exec -T worker python manage.py preflight ;;
+  new-contest) shift; dc exec -T worker python manage.py new-contest "\$@" ;;
+  update)
+    git fetch --quiet origin && git pull --quiet --ff-only
+    echo "now at \$(git log --oneline -1)"
+    exec bash "\$HOME_DIR/app/deploy/setup.sh" ;;
+  workers)
+    [[ "\${2:-}" =~ ^[1-9]\$ ]] || { echo "Usage: inq workers N   (1 to 9 parallel judge threads; each can use one CPU core)"; exit 1; }
+    sed -i "s/^INQUISITOR_JUDGE_WORKERS=.*/INQUISITOR_JUDGE_WORKERS=\$2/" "\$HOME_DIR/.env"
+    sed -i "s/^INQ_JUDGE_WORKERS=.*/INQ_JUDGE_WORKERS=\$2/" "\$HOME_DIR/install.conf"
+    dc up -d worker; echo "judge threads: \$2" ;;
   backup)    dc exec -T worker python manage.py backup ;;
   stats)     dc exec -T web python manage.py stats ;;
   watch)
