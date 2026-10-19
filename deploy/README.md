@@ -178,8 +178,8 @@ enough for slower languages. Contestants in Java must name their class `Main`. E
 ## Light theme
 
 Every page has a sun/moon button in the top bar. The site is dark by default, and the choice is remembered in the browser. The light theme is a warm "dirty white"
-and is derived automatically from the dark stylesheet (`theme.py`), so it stays in sync when the dark styles change. Primary buttons are graphite by default; set
-`INQUISITOR_LIGHT_ACCENT=blue` in `~/inquisitor/.env` (then `~/inquisitor/inq up -d`) for a deep blue accent instead. The projector scoreboard stays dark.
+and is derived automatically from the dark stylesheet (`theme.py`), so it stays in sync when the dark styles change. Buttons and links use a deep blue accent; set
+`INQUISITOR_LIGHT_ACCENT=ink` in `~/inquisitor/.env` (then `~/inquisitor/inq up -d`) for graphite buttons instead. The projector scoreboard stays dark.
 
 ## Putting it on the internet (Cloudflare Tunnel)
 

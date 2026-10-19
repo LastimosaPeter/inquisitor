@@ -221,5 +221,5 @@ ACCENTS = {
 }
 
 
-def build_light_css(css: str, accent: str = "ink") -> str:
-    return flip_stylesheet(css) + PALETTE + ACCENTS.get(accent, ACCENTS["ink"])
+def build_light_css(css: str, accent: str = "blue") -> str:
+    return flip_stylesheet(css) + PALETTE + ACCENTS.get(accent, ACCENTS["blue"])

@@ -999,8 +999,8 @@ _LIGHT_CSS_CACHE: dict = {}
 
 
 def light_accent() -> str:
-    accent = os.environ.get("INQUISITOR_LIGHT_ACCENT", "ink").strip().lower()
-    return accent if accent in theme.ACCENTS else "ink"
+    accent = os.environ.get("INQUISITOR_LIGHT_ACCENT", "blue").strip().lower()
+    return accent if accent in theme.ACCENTS else "blue"
 
 
 def _stylesheet_version() -> int:
@@ -1015,7 +1015,7 @@ def light_css():
     """The light stylesheet, derived from static/style.css (see theme.py) and cached until either file changes."""
     accent = request.args.get("a") or light_accent()
     if accent not in theme.ACCENTS:
-        accent = "ink"
+        accent = "blue"
     key = (accent, _stylesheet_version())
     if key not in _LIGHT_CSS_CACHE:
         _LIGHT_CSS_CACHE.clear()
