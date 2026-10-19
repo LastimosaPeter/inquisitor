@@ -151,6 +151,30 @@ from outside. Pictures are checked by their content (not their name), cleaned fi
 SVG files are refused. There are no links or raw HTML in statements, so a statement can never run a script. A formula with a mistake is shown in red, and an
 unfinished one such as `$x` is left as typed. The math library (KaTeX) is bundled with the site, so no internet access is needed.
 
+## Adding a problem
+
+In the director pages, open **Problems** and fill the form (or open **Edit problem** on an existing one).
+
+| Field | What to put |
+|---|---|
+| Statement | What contestants read. Markdown, math and pictures are supported (see above). |
+| Sample input / output | Shown to contestants. They are not used for judging. |
+| Time limit (ms) and Memory (MB) | Per problem. The time limit is for C, C++ and Rust. Other languages get more: Java 2x, Kotlin 2.5x, Python 2.5x, Ruby 3x. |
+| Hidden tests ZIP | The real tests, never shown to contestants. See below. |
+| Reference solution and language | A correct solution. **Validate** runs it on every hidden test, so you know the tests and the limits are right. |
+| Published | Contestants only see published problems. |
+
+**Hidden tests ZIP.** A ZIP with the files at its root (no folders), named in pairs: `input01.txt` with `output01.txt`, `input02.txt` with `output02.txt`, and so on.
+Each input is fed to the contestant's program on standard input, and its output is compared with the matching output file. The two files of a pair must
+have the same number. See `deploy/examples/example-hidden-tests.zip`. Uploading a new ZIP replaces all the old tests.
+
+**How answers are checked.** The program's output must equal the expected output line by line. Spaces at the end of a line and blank lines at the end are ignored, and
+nothing else is. There is no special checker, so each test must have exactly one correct output. Avoid "print any valid answer" problems, and print decimals with a
+fixed number of places (for example `%.3f`).
+
+**Before the contest.** Press **Validate** on each problem and make sure every check is green, read the statement in the live preview, and keep the limits generous
+enough for slower languages. Contestants in Java must name their class `Main`. Examples of a statement and a reference solution are in `deploy/examples/`.
+
 ## Putting it on the internet (Cloudflare Tunnel)
 
 The site listens on port 8080 of this machine. A tunnel connects a public address to it, so no router ports are opened.
