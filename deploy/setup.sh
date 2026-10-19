@@ -143,7 +143,7 @@ case "\${1:-}" in
   watch)
     interval="\${2:-10}"
     while true; do
-      clear
+      printf '\\033[H\\033[2J'
       echo "=== \$(date '+%H:%M:%S')   (Ctrl+C to stop) ==="
       uptime | sed 's/.*load average/load average/'
       free -m | awk '/Mem:/{printf "memory available: %s MB of %s MB\\n", \$7, \$2}'
