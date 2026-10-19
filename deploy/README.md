@@ -229,6 +229,18 @@ and 60 MB, and the judge containers about 2 cores. That is the most the contest 
 
 `~/inquisitor/inq down` stops the contest immediately and frees all of it.
 
+## Contest-day commands
+
+Run these on the server (`~/inquisitor/inq ...`):
+
+| Command | What it does |
+|---|---|
+| `inq update` | Pulls the newest code, rebuilds and restarts. Keeps your data, settings and profile (they are remembered in `~/inquisitor/install.conf`). |
+| `inq preflight` | Checks disk, memory, clock, the judge (judges a real Python, C++ and Java program), Google reachability, sign-in, the contest, every problem's hidden tests and backups. Prints PASS / WARN / FAIL with what to do. |
+| `inq new-contest --start "2026-10-20 16:30" --judge a@adnu.edu.ph` | Creates a contest that copies the active contest's problems (hidden tests and pictures too), starts by itself at that Philippine time, closes registration 15 minutes later (`--reg-close`), and adds the judges. Also `--name`, `--duration`, `--freeze`, `--id`, `--clone-from`. |
+| `inq workers N` | Sets the number of parallel judge threads (1 to 9) and restarts the judge. |
+| `inq stats`, `inq watch` | Live contest numbers; server load. |
+
 ## Update to a newer version
 
 ```bash
