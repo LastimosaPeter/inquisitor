@@ -290,3 +290,9 @@ main{padding-top:26px}.topbar{padding-bottom:18px;margin-bottom:24px}.topbar:aft
 .problem-images{display:grid;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line-soft)}
 .image-row{display:flex;align-items:center;gap:10px}.image-row img{width:56px;height:40px;object-fit:cover;border-radius:5px;border:1px solid var(--line-soft)}
 .image-row code{flex:1;font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
+
+/* theme toggle: show the icon of the theme you would switch to */
+.theme-toggle{display:inline-grid;place-items:center;width:34px;height:34px;padding:0;margin-right:6px}
+.theme-toggle .icon-moon{display:none}
+html[data-theme="light"] .theme-toggle .icon-sun{display:none}
+html[data-theme="light"] .theme-toggle .icon-moon{display:inline}

@@ -175,6 +175,12 @@ fixed number of places (for example `%.3f`).
 **Before the contest.** Press **Validate** on each problem and make sure every check is green, read the statement in the live preview, and keep the limits generous
 enough for slower languages. Contestants in Java must name their class `Main`. Examples of a statement and a reference solution are in `deploy/examples/`.
 
+## Light theme
+
+Every page has a sun/moon button in the top bar. The site is dark by default, and the choice is remembered in the browser. The light theme is a warm "dirty white"
+and is derived automatically from the dark stylesheet (`theme.py`), so it stays in sync when the dark styles change. Primary buttons are graphite by default; set
+`INQUISITOR_LIGHT_ACCENT=blue` in `~/inquisitor/.env` (then `~/inquisitor/inq up -d`) for a deep blue accent instead. The projector scoreboard stays dark.
+
 ## Putting it on the internet (Cloudflare Tunnel)
 
 The site listens on port 8080 of this machine. A tunnel connects a public address to it, so no router ports are opened.

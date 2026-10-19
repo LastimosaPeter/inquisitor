@@ -101,3 +101,15 @@
       }
     },20);
   }
+
+
+/* Theme toggle: remember the choice in a cookie (so the server sends the right stylesheet on the first paint) and reload. */
+(function () {
+  var button = document.getElementById('theme-toggle');
+  if (!button) return;
+  button.addEventListener('click', function () {
+    var next = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+    document.cookie = 'theme=' + next + '; path=/; max-age=31536000; SameSite=Lax' + (location.protocol === 'https:' ? '; Secure' : '');
+    location.reload();
+  });
+})();

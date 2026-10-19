@@ -31,6 +31,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 from judge import LANGUAGES, compiler_status, detect_language_from_filename, judge_backend, judge_submission
 import features_v1 as fx
+import theme
 
 BASE_DIR = Path(__file__).resolve().parent
 # Vercel presentation mode uses the only writable area available to the
@@ -994,6 +995,37 @@ def google_login_config():
     }
 
 
+_LIGHT_CSS_CACHE: dict = {}
+
+
+def light_accent() -> str:
+    accent = os.environ.get("INQUISITOR_LIGHT_ACCENT", "ink").strip().lower()
+    return accent if accent in theme.ACCENTS else "ink"
+
+
+def _stylesheet_version() -> int:
+    try:
+        return int((BASE_DIR / "static" / "style.css").stat().st_mtime) + int((BASE_DIR / "theme.py").stat().st_mtime)
+    except OSError:
+        return 0
+
+
+@app.get("/theme/light.css")
+def light_css():
+    """The light stylesheet, derived from static/style.css (see theme.py) and cached until either file changes."""
+    accent = request.args.get("a") or light_accent()
+    if accent not in theme.ACCENTS:
+        accent = "ink"
+    key = (accent, _stylesheet_version())
+    if key not in _LIGHT_CSS_CACHE:
+        _LIGHT_CSS_CACHE.clear()
+        _LIGHT_CSS_CACHE[key] = theme.build_light_css((BASE_DIR / "static" / "style.css").read_text(encoding="utf-8"), accent)
+    resp = make_response(_LIGHT_CSS_CACHE[key])
+    resp.mimetype = "text/css"
+    resp.headers["Cache-Control"] = "public, max-age=3600"
+    return resp
+
+
 @app.context_processor
 def inject_globals():
     me = current_user()
@@ -1007,6 +1039,8 @@ def inject_globals():
         "cstate": contest_state(contest) if contest else None,
         "languages": LANGUAGES,
         "compiler_status": compiler_status(),
+        "theme": "light" if request.cookies.get("theme") == "light" else "dark",
+        "light_css_url": url_for("light_css", a=request.args.get("accent") or light_accent(), v=_stylesheet_version()),
         "google_login": google_login_config(),
         "demo_mode": os.environ.get("INQUISITOR_DEMO_ACCOUNTS", "1") != "0",
         "version": "v1.0.8",
