@@ -128,7 +128,7 @@ ${CAPS_WORKER}
 EOF
 cat > "$INQ_HOME/inq" <<EOF
 #!/usr/bin/env bash
-# inq up -d | down | ps | logs -f | restart | status | https-on | https-off | backup | google-setup | staff-url | add-director | add-staff
+# inq up -d | down | ps | logs -f | restart | status | https-on | https-off | backup | google-setup | staff-url | add-director | add-staff | watch | stats
 # (anything else is passed to docker compose)
 set -e
 HOME_DIR="$INQ_HOME"
@@ -139,6 +139,19 @@ case "\${1:-}" in
   https-on)  sed -i 's/^INQUISITOR_SECURE_COOKIES=.*/INQUISITOR_SECURE_COOKIES=1/' "\$HOME_DIR/.env"; dc up -d; echo "secure cookies ON (use this once the site is served over https)" ;;
   https-off) sed -i 's/^INQUISITOR_SECURE_COOKIES=.*/INQUISITOR_SECURE_COOKIES=0/' "\$HOME_DIR/.env"; dc up -d; echo "secure cookies OFF" ;;
   backup)    dc exec -T worker python manage.py backup ;;
+  stats)     dc exec -T web python manage.py stats ;;
+  watch)
+    interval="\${2:-10}"
+    while true; do
+      clear
+      echo "=== \$(date '+%H:%M:%S')   (Ctrl+C to stop) ==="
+      uptime | sed 's/.*load average/load average/'
+      free -m | awk '/Mem:/{printf "memory available: %s MB of %s MB\\n", \$7, \$2}'
+      echo "busiest processes:"; ps -eo pcpu,comm --sort=-pcpu | sed -n '2,5p' | sed 's/^/  /'
+      echo; docker stats --no-stream --format 'table {{.Name}}\\t{{.CPUPerc}}\\t{{.MemUsage}}' 2>/dev/null | grep -E 'NAME|inquisitor'
+      echo; dc exec -T web python manage.py stats 2>/dev/null
+      sleep "\$interval"
+    done ;;
   add-staff)
     [ -n "\${3:-}" ] || { echo "Usage: inq add-staff EMAIL ROLE [SECOND_EMAIL]   (ROLE: director, chief_judge, judge, problem_setter, technical_admin, registration_staff, spectator)"; exit 1; }
     dc exec -T web python manage.py add-staff --email "\$2" --role "\$3" \${4:+--also "\$4"} ;;

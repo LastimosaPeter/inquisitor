@@ -1378,7 +1378,7 @@ def google_complete():
             else:
                 cur = conn.execute(
                     "INSERT INTO accounts(username,email,password_hash,display_name,affiliation,department,college,year_level,institution_id,role,google_sub,created_at) VALUES(?,?,?,?,?,?,?,?,?, 'participant', ?, ?)",
-                    (_unique_username(conn, pending["email"]), pending["email"], generate_password_hash(secrets.token_hex(32)), display_name, affiliation, department, college, year_level, iid, pending["sub"], iso(utcnow())))
+                    (_unique_username(conn, pending["email"]), pending["email"], fx.unusable_password_hash(), display_name, affiliation, department, college, year_level, iid, pending["sub"], iso(utcnow())))
                 aid = cur.lastrowid
             conn.execute("INSERT OR IGNORE INTO registrations(contest_id,account_id,team_api_id,team_name,approval_status,registration_status,coach_name,adviser_name) VALUES(?,?,?,?,?,?,?,?)",
                          (contest["id"], aid, f"p-{aid}", team_name, approval, "REGISTERED", "", ""))

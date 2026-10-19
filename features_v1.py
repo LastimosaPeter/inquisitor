@@ -403,6 +403,12 @@ def _staff_permission(permission: str):
     return deco
 
 
+def unusable_password_hash() -> str:
+    """Hash of a random 256-bit secret nobody knows, for accounts that only sign in with Google. Cheap on purpose:
+    the secret cannot be guessed, so the default (memory-hungry) password hash would only waste CPU at registration time."""
+    return generate_password_hash(secrets.token_hex(32), method="pbkdf2:sha256:1000")
+
+
 def parse_email_list(text: str) -> list[str]:
     """Emails separated by new lines (or commas / semicolons / spaces), lower-cased, duplicates removed in order."""
     seen, out = set(), []
@@ -424,7 +430,7 @@ def whitelist_staff(conn, core, contest_id: str, email: str, staff_role: str) ->
     else:
         username = core._unique_username(conn, email)
         cur = conn.execute("INSERT INTO accounts(username,email,password_hash,display_name,affiliation,role,created_at) VALUES(?,?,?,?,?,?,?)",
-                           (username, email, generate_password_hash(secrets.token_hex(32)), username, "TACTICS x ACPC", "judge", core.iso(core.utcnow())))
+                           (username, email, unusable_password_hash(), username, "TACTICS x ACPC", "judge", core.iso(core.utcnow())))
         account_id, outcome = cur.lastrowid, "created"
     conn.execute("DELETE FROM staff_assignments WHERE contest_id=? AND account_id=?", (contest_id, account_id))
     conn.execute("INSERT INTO staff_assignments(contest_id,account_id,staff_role,created_at) VALUES(?,?,?,?)", (contest_id, account_id, staff_role, core.iso(core.utcnow())))
@@ -536,7 +542,7 @@ def staff():
                     conn.execute("UPDATE accounts SET role='judge' WHERE id=?", (account_id,))
                 else:
                     if google_only:
-                        username = username or core._unique_username(conn, email); display = display or username; pw_hash = generate_password_hash(secrets.token_hex(32))
+                        username = username or core._unique_username(conn, email); display = display or username; pw_hash = unusable_password_hash()
                     else:
                         pw_hash = generate_password_hash(password)
                     cur = conn.execute("INSERT INTO accounts(username,email,password_hash,display_name,affiliation,role,created_at) VALUES(?,?,?,?,?,?,?)", (username, email, pw_hash, display, "TACTICS x ACPC", "judge", core.iso(core.utcnow())))
@@ -1370,6 +1376,7 @@ def clone_contest(cid):
         for p in probs:
             pcols=[r[1] for r in conn.execute("PRAGMA table_info(problems)") if r[1] not in {"id","contest_id"}]; cur=conn.execute(f"INSERT INTO problems(contest_id,{','.join(pcols)}) VALUES(? ,{','.join('?' for _ in pcols)})",[new_id,*[p[c] for c in pcols]]); newp=conn.execute("SELECT * FROM problems WHERE id=?",(cur.lastrowid,)).fetchone(); src_td=core.problem_tests_dir(p); dst_td=core.problem_tests_dir(newp)
             if src_td.exists(): shutil.copytree(src_td,dst_td,dirs_exist_ok=True)
+            if (src_td.parent/"images").is_dir(): shutil.copytree(src_td.parent/"images",dst_td.parent/"images",dirs_exist_ok=True)
         audit(conn,"contest.clone",contest_id=new_id,object_type="contest",object_id=new_id,detail=f"Cloned from {cid}"); conn.commit(); flash("Contest cloned with problems and judge data. Contestants and submissions were not copied.","success")
     except Exception as exc:
         conn.rollback(); flash(f"Clone failed: {exc}","danger")
