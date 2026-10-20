@@ -1039,7 +1039,7 @@ def inject_globals():
         "cstate": contest_state(contest) if contest else None,
         "languages": LANGUAGES,
         "compiler_status": compiler_status(),
-        "theme": "light" if request.cookies.get("theme") == "light" else "dark",
+        "theme": "dark" if (request.cookies.get("theme") or os.environ.get("INQUISITOR_DEFAULT_THEME", "light")) == "dark" else "light",
         "light_css_url": url_for("light_css", a=request.args.get("accent") or light_accent(), v=_stylesheet_version()),
         "google_login": google_login_config(),
         "demo_mode": os.environ.get("INQUISITOR_DEMO_ACCOUNTS", "1") != "0",
@@ -2340,7 +2340,7 @@ def admin_update_participant_profile(aid):
     department=request.form.get("department",acct["department"]).strip(); affiliation=request.form.get("affiliation",acct["affiliation"]).strip(); college=request.form.get("college",acct["college"]).strip(); year_level=request.form.get("year_level",acct["year_level"]).strip()
     username=re.sub(r"[^a-z0-9_.-]+",".",username).strip("._-")[:32]   # commas, spaces and capitals are tidied instead of rejected
     email=email.strip(" ,;")
-    if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{2,31}",username): flash(f"Username must be 3-32 characters using lowercase letters, numbers, ., _, or - (got '{username}').","danger"); return redirect(url_for("admin_participants"))
+    if username!=acct["username"] and not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{1,31}",username): flash(f"Username must be 2-32 characters using lowercase letters, numbers, ., _, or - (got '{username}').","danger"); return redirect(url_for("admin_participants"))
     if email and not re.fullmatch(r"[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+",email): flash(f"'{email}' is not a valid email address (one address only, no commas).","danger"); return redirect(url_for("admin_participants"))
     iid=None
     if affiliation:
