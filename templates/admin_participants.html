@@ -11,8 +11,8 @@
       <div class="form-row"><label>Department / program<input name="department" placeholder="Department of Computer Science" required></label><label>College<input name="college" placeholder="College of Computer Studies"></label></div>
       <div class="form-row"><label>School / affiliation<input name="affiliation" value="Ateneo de Naga University"></label><label>Year level<input name="year_level" placeholder="3rd Year"></label></div>
       {% if contest['competition_mode']=='team' %}<label>Team name<input name="team_name" placeholder="Team Nebula"><small class="muted">Maximum {{ contest['max_team_size'] }} members per team.</small></label>{% endif %}
-      <div class="form-row"><label>Username<input name="username" required><small class="muted">Used for sign-in now.</small></label><label>Email <small class="muted">Optional; may be used as the ADNU account sign-in later.</small><input type="email" name="email" placeholder="name@adnu.edu.ph"></label></div>
-      <label>Initial password<input name="password" type="password" minlength="6" required></label>
+      <div class="form-row"><label>Username<input name="username"><small class="muted">Optional when you give an ADNU email.</small></label><label>Email <small class="muted">Optional; may be used as the ADNU account sign-in later.</small><input type="email" name="email" placeholder="name@adnu.edu.ph"></label></div>
+      <label>Initial password<input name="password" type="password" minlength="6"><small class="muted">Leave empty for students who sign in with Google.</small></label>
       <details class="form-section"><summary>Venue and support details</summary><div class="form-stack top-gap"><div class="form-row"><label>Seat<input name="seat" placeholder="Lab A · Seat 17"></label><label>Workstation<input name="workstation" placeholder="PC-17"></label></div><div class="form-row"><label>Coach<input name="coach_name"></label><label>Adviser<input name="adviser_name"></label></div></div></details>
       <button class="button" type="submit">Create and register</button>
     </form>

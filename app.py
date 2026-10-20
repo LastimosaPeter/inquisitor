@@ -2275,9 +2275,11 @@ def admin_participants():
     if request.method=="POST":
         try:
             username=request.form.get("username","").strip().lower(); email=request.form.get("email","").strip().lower(); password=request.form.get("password","").strip(); display_name=request.form.get("display_name","").strip(); affiliation=request.form.get("affiliation","").strip(); department=request.form.get("department","").strip(); college=request.form.get("college","").strip(); year_level=request.form.get("year_level","").strip(); team_name=request.form.get("team_name","").strip() if contest["competition_mode"]=="team" else ""
-            if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{2,31}",username): raise ValueError("Username must be 3-32 characters using lowercase letters, numbers, ., _, or -.")
             if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",email): raise ValueError("Enter a valid email address.")
-            if len(password)<6: raise ValueError("Initial password must contain at least 6 characters.")
+            if not username and email: username=_unique_username(conn,email)   # signing in with Google: the email is enough
+            if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{2,31}",username): raise ValueError("Enter the student's ADNU email, or a username of 3-32 characters (lowercase letters, numbers, ., _ or -).")
+            if not password and email and google_login_config(): password=""
+            elif len(password)<6: raise ValueError("Initial password must contain at least 6 characters (or leave it empty and give an ADNU email so they sign in with Google).")
             if not display_name: raise ValueError("Participant name is required.")
             if not department: raise ValueError("Department / program is required.")
             if team_name:
@@ -2286,7 +2288,7 @@ def admin_participants():
             iid=None
             if affiliation:
                 inst=conn.execute("SELECT id FROM institutions WHERE lower(name)=lower(?) OR lower(short_name)=lower(?)",(affiliation,affiliation)).fetchone(); iid=inst["id"] if inst else None
-            cur=conn.execute("INSERT INTO accounts(username,email,password_hash,display_name,affiliation,department,college,year_level,institution_id,role,created_at) VALUES(?,?,?,?,?,?,?,?,?, 'participant', ?)",(username,email,generate_password_hash(password),display_name,affiliation,department,college,year_level,iid,iso(utcnow()))); aid=cur.lastrowid
+            cur=conn.execute("INSERT INTO accounts(username,email,password_hash,display_name,affiliation,department,college,year_level,institution_id,role,created_at) VALUES(?,?,?,?,?,?,?,?,?, 'participant', ?)",(username,email,(generate_password_hash(password) if password else fx.unusable_password_hash()),display_name,affiliation,department,college,year_level,iid,iso(utcnow()))); aid=cur.lastrowid
             conn.execute("INSERT INTO registrations(contest_id,account_id,team_api_id,team_name,approval_status,registration_status,seat,workstation,coach_name,adviser_name,temporary_password) VALUES(?,?,?,?,?,?,?,?,?,?,1)",(contest["id"],aid,f"p-{aid}",team_name,"APPROVED","REGISTERED",request.form.get("seat","").strip(),request.form.get("workstation","").strip(),request.form.get("coach_name","").strip(),request.form.get("adviser_name","").strip()))
             fx.audit(conn,"participant.create",contest_id=contest["id"],object_type="account",object_id=aid,detail=display_name); conn.commit(); flash("Participant account created and registered.","success"); return redirect(url_for("admin_participants"))
         except sqlite3.IntegrityError:
