@@ -1678,6 +1678,9 @@ def submit():
         flash("Invalid problem or language. Use a supported source file or select a language.","danger"); return redirect(url_for("submit"))
     if not source.strip(): flash("Paste code or upload a source file.","danger"); return redirect(url_for("submit",problem=code))
     if len(source.encode("utf-8")) > p["code_limit_kb"]*1024: flash("Source code exceeds this problem's code limit.","danger"); return redirect(url_for("submit",problem=code))
+    max_waiting=int(os.environ.get("INQUISITOR_MAX_WAITING_SUBMISSIONS","3"))
+    if max_waiting>0 and conn.execute("SELECT COUNT(*) FROM submissions WHERE contest_id=? AND account_id=? AND status IN ('PENDING','JUDGING')",(contest["id"],me["id"])).fetchone()[0]>=max_waiting:
+        flash(f"You already have {max_waiting} submissions waiting to be judged. Wait for a verdict, then submit again.","danger"); return redirect(url_for("submit",problem=code))
     entry_point={"java":"Main","kotlin":"MainKt","python3":"main.py","ruby":"main.rb"}.get(language)
     detail=""
     if mismatch: detail=f"Language mismatch: form selected {selected_language}; file extension detected {language}. Inquisitor used the detected language."
