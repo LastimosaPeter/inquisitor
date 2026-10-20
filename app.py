@@ -2200,6 +2200,17 @@ def admin_update_contest(cid):
         conn.rollback(); flash(str(exc),"danger")
     return redirect(url_for("admin_contests"))
 
+def _read_number(label, raw, low, high, unit="", cast=int):
+    """A form number that must be inside a range. Says exactly what is wrong instead of quietly changing the value."""
+    try:
+        value = cast(str(raw).strip())
+    except (TypeError, ValueError):
+        raise ValueError(f"{label} must be a number{' in ' + unit if unit else ''} (you entered '{str(raw).strip()[:20]}').")
+    if not low <= value <= high:
+        raise ValueError(f"{label} must be between {low} and {high}{' ' + unit if unit else ''} (you entered {value}).")
+    return value
+
+
 @app.route("/admin/problems", methods=["GET", "POST"])
 @fx._staff_permission("problems")
 def admin_problems():
@@ -2211,9 +2222,9 @@ def admin_problems():
             if not ID_RE.fullmatch(api_id): raise ValueError("Problem API ID is invalid.")
             if not code or len(code)>8: raise ValueError("Problem label/code is required and must be short.")
             if not title or not statement: raise ValueError("Title and statement are required.")
-            ordinal=int(request.form.get("ordinal","1")); time_limit_ms=max(100,min(60000,int(request.form.get("time_limit_ms","2000")))); memory_limit_mb=max(16,min(16384,int(request.form.get("memory_limit_mb","256"))))
+            ordinal=_read_number("Order",request.form.get("ordinal","1"),0,9999); time_limit_ms=_read_number("Time limit",request.form.get("time_limit_ms","2000"),100,60000,"ms"); memory_limit_mb=_read_number("Memory limit",request.form.get("memory_limit_mb","256"),16,16384,"MB")
             difficulty=request.form.get("difficulty","Medium"); difficulty=difficulty if difficulty in {"Easy","Medium","Hard","Expert"} else "Medium"
-            tags=request.form.get("tags","").strip(); source_name=request.form.get("source","").strip(); internal_notes=request.form.get("internal_notes","").strip(); points=max(0,float(request.form.get("points","100"))); enabled=1 if request.form.get("enabled","on")=="on" else 0
+            tags=request.form.get("tags","").strip(); source_name=request.form.get("source","").strip(); internal_notes=request.form.get("internal_notes","").strip(); points=_read_number("Points",request.form.get("points","100"),0,100000,"",float); enabled=1 if request.form.get("enabled","on")=="on" else 0
             reference_solution=request.form.get("reference_solution",""); reference_language=request.form.get("reference_language","") if reference_solution.strip() else ""; validator_source=request.form.get("validator_source","")
             if reference_language and reference_language not in LANGUAGES: raise ValueError("Reference solution language is unsupported.")
             sample_input=request.form.get("sample_input",""); sample_output=request.form.get("sample_output","")
@@ -2241,7 +2252,7 @@ def admin_update_problem(pid):
     try:
         title=request.form.get("title",p["title"]).strip() or p["title"]; statement=request.form.get("statement",p["statement"]).strip() or p["statement"]; contributors=request.form.get("contributors",p["contributors"]).strip(); color=request.form.get("color",p["color"]).strip()
         if not HEX_COLOR_RE.fullmatch(color): raise ValueError("Problem color must be a six-digit hex color.")
-        sample_input=request.form.get("sample_input",p["sample_input"]); sample_output=request.form.get("sample_output",p["sample_output"]); time_limit_ms=max(100,min(60000,int(request.form.get("time_limit_ms",p["time_limit_ms"])))); memory_limit_mb=max(16,min(16384,int(request.form.get("memory_limit_mb",p["memory_limit_mb"])))); ordinal=int(request.form.get("ordinal",p["ordinal"])); difficulty=request.form.get("difficulty",p["difficulty"]); tags=request.form.get("tags",p["tags"]).strip(); source_name=request.form.get("source",p["source"]).strip(); internal_notes=request.form.get("internal_notes",p["internal_notes"]).strip(); points=max(0,float(request.form.get("points",p["points"]))); enabled=1 if request.form.get("enabled")=="on" else 0; reference_solution=request.form.get("reference_solution",p["reference_solution"]); reference_language=request.form.get("reference_language",p["reference_language"]); validator_source=request.form.get("validator_source",p["validator_source"])
+        sample_input=request.form.get("sample_input",p["sample_input"]); sample_output=request.form.get("sample_output",p["sample_output"]); time_limit_ms=_read_number("Time limit",request.form.get("time_limit_ms",p["time_limit_ms"]),100,60000,"ms"); memory_limit_mb=_read_number("Memory limit",request.form.get("memory_limit_mb",p["memory_limit_mb"]),16,16384,"MB"); ordinal=_read_number("Order",request.form.get("ordinal",p["ordinal"]),0,9999); difficulty=request.form.get("difficulty",p["difficulty"]); tags=request.form.get("tags",p["tags"]).strip(); source_name=request.form.get("source",p["source"]).strip(); internal_notes=request.form.get("internal_notes",p["internal_notes"]).strip(); points=_read_number("Points",request.form.get("points",p["points"]),0,100000,"",float); enabled=1 if request.form.get("enabled")=="on" else 0; reference_solution=request.form.get("reference_solution",p["reference_solution"]); reference_language=request.form.get("reference_language",p["reference_language"]); validator_source=request.form.get("validator_source",p["validator_source"])
         if reference_language and reference_language not in LANGUAGES: raise ValueError("Reference solution language is unsupported.")
         conn.execute("""UPDATE problems SET title=?,statement=?,contributors=?,color=?,sample_input=?,sample_output=?,time_limit_ms=?,memory_limit_mb=?,ordinal=?,difficulty=?,tags=?,source=?,internal_notes=?,points=?,enabled=?,reference_solution=?,reference_language=?,validator_source=? WHERE id=?""",(title,statement,contributors,color.lower(),sample_input,sample_output,time_limit_ms,memory_limit_mb,ordinal,difficulty,tags,source_name,internal_notes,points,enabled,reference_solution,reference_language,validator_source,pid))
         tests=request.files.get("tests_zip")
