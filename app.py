@@ -3111,6 +3111,7 @@ def api_scoreboard(cid):
     if not c:return api_error(404,"Contest not found")
     st=contest_state(c); frozen=st["phase"] in {"FROZEN","ENDED"} and not st["revealed"]
     rows, probs=standings(c, st["freeze_at"] if frozen else None)
+    if _api_problems_hidden(c): probs=[]   # problem ids are made from the titles: keep them back until the contest starts
     start, end, _=contest_times(c); now=utcnow(); contest_seconds=(min(now,end)-start).total_seconds() if start and end else 0
     out=[]
     for r in rows:
