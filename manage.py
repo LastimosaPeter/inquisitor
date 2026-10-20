@@ -310,11 +310,10 @@ def preflight_command(args):
                 for p in problems:
                     t0 = time.time(); rep = fx.validate_problem(p, conn); took = time.time() - t0
                     failed = [x for x in rep["checks"] if not x["ok"]]
-                    hard = [x for x in failed if x["name"] != "Reference solution"]
-                    level = "PASS" if rep["ok"] else ("FAIL" if hard else "WARN")
-                    shown = (hard or failed)[0] if failed else None
-                    line(level, f"problem {p['code']} {p['title']}: " + ("all checks green" if rep["ok"] else shown["name"] + ": " + shown["detail"][:110]) + f" ({took:.1f} s)",
-                         "" if rep["ok"] else ("open the problem and press Validate" if hard else "optional: a reference solution lets Validate prove the hidden tests are correct"))
+                    noref = any(x["name"] == "Reference solution" and x["detail"].startswith("No reference") for x in rep["checks"])
+                    level = "FAIL" if failed else ("WARN" if noref else "PASS")
+                    line(level, f"problem {p['code']} {p['title']}: " + (f"{failed[0]['name']}: {failed[0]['detail'][:110]}" if failed else ("checks pass, but no reference solution to prove the hidden tests" if noref else "all checks green")) + f" ({took:.1f} s)",
+                         "open the problem and press Validate" if failed else ("optional: add a reference solution" if noref else ""))
                 regs = conn.execute("SELECT COUNT(*) FROM registrations WHERE contest_id=?", (c["id"],)).fetchone()[0]
                 subs = conn.execute("SELECT COUNT(*) FROM submissions WHERE contest_id=?", (c["id"],)).fetchone()[0]
                 line("PASS", f"already registered: {regs}; submissions so far: {subs}")

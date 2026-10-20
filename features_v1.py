@@ -730,7 +730,7 @@ def validate_problem(problem, conn=None) -> dict:
         result=core.judge_submission(language=problem["reference_language"],source=problem["reference_solution"],tests_dir=td,time_limit_ms=problem["time_limit_ms"],memory_limit_mb=problem["memory_limit_mb"])
         check("Reference solution",result.get("verdict")=="AC",f"{result.get('verdict')}: {result.get('detail','')[:300]}")
     else:
-        check("Reference solution",False,"No reference solution configured.")
+        check("Reference solution",True,"No reference solution configured (optional): the hidden tests are used as they are.")
     if problem["validator_source"].strip():
         validator_ok=True; detail="Validator accepted all hidden inputs."
         try:
@@ -752,7 +752,7 @@ def validate_problem(problem, conn=None) -> dict:
 def validate_problem_route(pid):
     core=_core(); conn=core.get_db(); p=conn.execute("SELECT * FROM problems WHERE id=?",(pid,)).fetchone()
     if not p: abort(404)
-    report=validate_problem(p,conn); cur=conn.execute("INSERT INTO problem_validations(problem_id,status,report_json,validated_by,validated_at) VALUES(?,?,?,?,?)",(pid,"PASS" if report["ok"] else "FAIL",json.dumps(report),core.current_user()["id"],core.iso(core.utcnow()))); audit(conn,"problem.validate",contest_id=p["contest_id"],object_type="problem",object_id=pid,detail="PASS" if report["ok"] else "FAIL"); conn.commit(); flash("Problem validation passed." if report["ok"] else "Problem validation found issues.","success" if report["ok"] else "danger"); return redirect(url_for("admin_problems"))
+    report=validate_problem(p,conn); cur=conn.execute("INSERT INTO problem_validations(problem_id,status,report_json,validated_by,validated_at) VALUES(?,?,?,?,?)",(pid,"PASS" if report["ok"] else "FAIL",json.dumps(report),core.current_user()["id"],core.iso(core.utcnow()))); audit(conn,"problem.validate",contest_id=p["contest_id"],object_type="problem",object_id=pid,detail="PASS" if report["ok"] else "FAIL"); conn.commit(); flash("Problem validation passed." if report["ok"] else "Problem validation failed: "+"; ".join(f"{c['name']}: {c['detail']}" for c in report["checks"] if not c["ok"])[:500],"success" if report["ok"] else "danger"); return redirect(url_for("admin_problems"))
 
 
 # ---------- Registration, check-in, credentials ----------
