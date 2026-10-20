@@ -1508,7 +1508,7 @@ def dashboard():
     me = current_user()
     contest = active_contest()
     reg = participant_registered(contest["id"], me["id"])
-    problems = get_db().execute("SELECT * FROM problems WHERE contest_id=? AND enabled=1 ORDER BY ordinal,code",(contest["id"],)).fetchall()
+    problems = [] if problems_hidden_from_students(contest) else get_db().execute("SELECT * FROM problems WHERE contest_id=? AND enabled=1 ORDER BY ordinal,code",(contest["id"],)).fetchall()
     board, _ = standings(contest)
     mine = next((r for r in board if me["id"] in r["participant"].get("account_ids", [])), None)
     recent = get_db().execute(
@@ -1516,13 +1516,24 @@ def dashboard():
            WHERE s.contest_id=? AND s.account_id=? ORDER BY s.id DESC LIMIT 8""",
         (contest["id"], me["id"])
     ).fetchall()
-    return render_template("dashboard.html", reg=reg, problems=problems, mine=mine, recent=recent)
+    return render_template("dashboard.html", reg=reg, problems=problems, mine=mine, recent=recent, problems_hidden=problems_hidden_from_students(contest))
+
+
+PROBLEMS_HIDDEN_PHASES = {"DRAFT", "REGISTRATION", "REGISTRATION CLOSED", "UPCOMING", "SCHEDULED"}
+
+
+def problems_hidden_from_students(contest) -> bool:
+    """Statements, pictures and titles stay hidden from students until the contest starts (staff always see them)."""
+    return contest_state(contest)["phase"] in PROBLEMS_HIDDEN_PHASES
 
 
 @app.route("/problems")
 @participant_required
 def problems():
     contest = active_contest()
+    if problems_hidden_from_students(contest):
+        flash("The problems appear here when the contest starts.", "info")
+        return redirect(url_for("dashboard"))
     rows=get_db().execute("SELECT * FROM problems WHERE contest_id=? AND enabled=1 ORDER BY ordinal,code",(contest["id"],)).fetchall()
     return render_template("problems.html", problems=rows)
 
@@ -1611,6 +1622,8 @@ def problem_image(code, name):
     if not contest or not IMAGE_NAME_RE.fullmatch(name):
         abort(404)
     staff = me["role"] in ("judge", "admin")
+    if not staff and problems_hidden_from_students(contest):
+        abort(404)
     p = get_db().execute("SELECT * FROM problems WHERE contest_id=? AND code=?" + ("" if staff else " AND enabled=1"), (contest["id"], code.upper())).fetchone()
     path = problem_images_dir(contest["id"], p["api_id"]) / name if p else None
     mimetype = IMAGE_TYPES.get(path.suffix.lower().lstrip(".")) if path else None
@@ -1626,6 +1639,9 @@ def problem_image(code, name):
 @participant_required
 def problem(code):
     contest = active_contest()
+    if problems_hidden_from_students(contest):
+        flash("The problems appear when the contest starts.", "info")
+        return redirect(url_for("dashboard"))
     p = get_db().execute("SELECT * FROM problems WHERE contest_id=? AND code=? AND enabled=1", (contest["id"], code.upper())).fetchone()
     if not p:
         abort(404)
@@ -2779,16 +2795,23 @@ def api_language_one(cid, lid):
     return jsonify(api_language(lid))
 
 
+def _api_problems_hidden(contest) -> bool:
+    me = current_user()
+    return bool(contest) and problems_hidden_from_students(contest) and not (me and me["role"] in ("judge", "admin"))
+
+
 @app.get("/api/contests/<cid>/problems")
 def api_problems(cid):
-    if not contest_by_id(cid): return api_error(404, "Contest not found")
+    c = contest_by_id(cid)
+    if not c: return api_error(404, "Contest not found")
+    if _api_problems_hidden(c): return jsonify([])
     return jsonify([api_problem(p) for p in contest_problems(cid)])
 
 
 @app.get("/api/contests/<cid>/problems/<pid>")
 def api_problem_one(cid, pid):
     p = get_db().execute("SELECT * FROM problems WHERE contest_id=? AND api_id=?", (cid,pid)).fetchone()
-    if not p: return api_error(404, "Problem not found")
+    if not p or _api_problems_hidden(contest_by_id(cid)): return api_error(404, "Problem not found")
     return jsonify(api_problem(p))
 
 
