@@ -2338,9 +2338,10 @@ def admin_update_participant_profile(aid):
     username=request.form.get("username",acct["username"]).strip().lower()
     email=request.form.get("email",acct["email"] or "").strip().lower()
     department=request.form.get("department",acct["department"]).strip(); affiliation=request.form.get("affiliation",acct["affiliation"]).strip(); college=request.form.get("college",acct["college"]).strip(); year_level=request.form.get("year_level",acct["year_level"]).strip()
-    if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{2,31}",username): flash("Username must be 3-32 characters using lowercase letters, numbers, ., _, or -.","danger"); return redirect(url_for("admin_participants"))
-    if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",email): flash("Enter a valid email address.","danger"); return redirect(url_for("admin_participants"))
-    if not department: flash("Department / program is required.","danger"); return redirect(url_for("admin_participants"))
+    username=re.sub(r"[^a-z0-9_.-]+",".",username).strip("._-")[:32]   # commas, spaces and capitals are tidied instead of rejected
+    email=email.strip(" ,;")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{2,31}",username): flash(f"Username must be 3-32 characters using lowercase letters, numbers, ., _, or - (got '{username}').","danger"); return redirect(url_for("admin_participants"))
+    if email and not re.fullmatch(r"[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+",email): flash(f"'{email}' is not a valid email address (one address only, no commas).","danger"); return redirect(url_for("admin_participants"))
     iid=None
     if affiliation:
         inst=conn.execute("SELECT id FROM institutions WHERE lower(name)=lower(?) OR lower(short_name)=lower(?)",(affiliation,affiliation)).fetchone(); iid=inst["id"] if inst else None
