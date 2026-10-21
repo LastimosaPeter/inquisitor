@@ -250,6 +250,17 @@ Run these on the server (`~/inquisitor/inq ...`):
 - **Problems** are hidden from students until the contest is RUNNING. Directors, chief judges, judges and problem setters can always read them (read only).
 - **Check** `https://<your site>/contest/<contest id>` after any change: Start, Phase and the countdown should say what you expect.
 
+## Seeing what the app is doing (and did)
+
+| Where | What it shows |
+|---|---|
+| Director menu, **Diagnostics** | The app right now: contest phase, judge queue and threads, recent errors, disk and memory, and a short **Needs attention** list. It refreshes by itself. **Copy report** puts it on the clipboard so you can paste it into a chat to ask what is going on. |
+| Diagnostics, **Deep dive** | The history behind it: requests per minute and the busiest and slowest pages, slow requests, the database write-lock time, judging time by language and by problem, the last two hours in 5-minute steps, CPU and memory per minute, the Google sign-in funnel with the reasons people failed, restarts, and the latest staff actions. |
+| `inq report` / `inq report deep` | The same, in the terminal, plus container status and the recent web and worker log lines. Paste the output into a chat. |
+| `inq contest-report` | **After a contest:** how it went. Participation, how long submissions waited before judging, the busiest moment, every problem's attempts and accepted rate, time-limit verdicts, judge errors, and (from the web access log) request volume, server errors and rate-limited sign-ins. It is built from data that already exists, so it also works for a contest that ran before the Diagnostics page existed (except the CPU, memory and page-speed history, which were not recorded then). |
+
+The history is kept for 3 days in the same database. Error messages and paths are stored without query strings, and anything that looks like a password, token or key is replaced by `[hidden]`. Email addresses in the sign-in history are shortened to the first letter and the domain.
+
 ## Update to a newer version
 
 ```bash

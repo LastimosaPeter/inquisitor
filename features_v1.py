@@ -177,6 +177,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         _add_column(conn, "submissions", definition)
     import diagnostics
     diagnostics.ensure_tables(conn)
+    import telemetry
+    telemetry.ensure_tables(conn)
 
     # Google sign-in: the stable Google account id (sub) of a student who signed in with ADNU Google.
     _add_column(conn, "accounts", "google_sub TEXT")
@@ -1270,8 +1272,9 @@ def network_status():
 def diagnostics_page():
     import diagnostics
     core=_core(); conn=core.get_db()
-    report=diagnostics.collect(core,conn)
-    return render_template("v1_diagnostics.html",report=report,report_text=diagnostics.render_text(report))
+    deep=request.args.get("deep")=="1"
+    report=diagnostics.collect(core,conn,deep=deep)
+    return render_template("v1_diagnostics.html",report=report,report_text=diagnostics.render_text(report),deep=deep)
 
 
 @bp.get("/director/diagnostics.txt")
@@ -1279,7 +1282,7 @@ def diagnostics_page():
 def diagnostics_text():
     import diagnostics
     core=_core(); conn=core.get_db()
-    resp=make_response(diagnostics.render_text(diagnostics.collect(core,conn))); resp.mimetype="text/plain"; resp.headers["Cache-Control"]="no-store"
+    resp=make_response(diagnostics.render_text(diagnostics.collect(core,conn,deep=request.args.get("deep")=="1"))); resp.mimetype="text/plain"; resp.headers["Cache-Control"]="no-store"
     return resp
 
 

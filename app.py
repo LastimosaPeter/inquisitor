@@ -33,6 +33,7 @@ from judge import LANGUAGES, compiler_status, detect_language_from_filename, jud
 import features_v1 as fx
 import theme
 import diagnostics
+import telemetry
 
 BASE_DIR = Path(__file__).resolve().parent
 # Vercel presentation mode uses the only writable area available to the
@@ -1072,6 +1073,27 @@ def inject_globals():
 
 
 @app.before_request
+def telemetry_begin():
+    try:
+        g._t0 = time.perf_counter()
+        telemetry.start(sys.modules[__name__], "web")     # once per process: flushes counters and samples resources every minute
+    except Exception:
+        pass
+
+
+@app.after_request
+def telemetry_end(response):
+    try:
+        t0 = getattr(g, "_t0", None)
+        if t0 is not None:
+            telemetry.record_request(sys.modules[__name__], request.endpoint or "(no route)", request.method, request.path, response.status_code,
+                                     (time.perf_counter() - t0) * 1000.0, session.get("user_id"))
+    except Exception:
+        pass
+    return response
+
+
+@app.before_request
 def security_and_api_gate():
     # CSRF protection for browser forms. API clients authenticate separately.
     if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not request.path.startswith("/api/"):
@@ -1161,6 +1183,7 @@ def _password_login_view(template: str):
         attempts=[t for t in LOGIN_ATTEMPTS.get(client,[]) if now_ts-t<LOGIN_WINDOW_SECONDS]
         LOGIN_ATTEMPTS[client]=attempts
         if len(attempts)>=LOGIN_MAX_FAILURES:
+            telemetry.auth_event(sys.modules[__name__], "password_rate_limited")
             flash("Too many failed sign-in attempts. Try again in a few minutes.", "danger")
             return render_template(template, staff_open=True), 429
         username = request.form.get("username", "").strip().lower()
@@ -1170,12 +1193,14 @@ def _password_login_view(template: str):
             LOGIN_ATTEMPTS.pop(client,None)
             session.clear()
             session["user_id"] = user["id"]
+            telemetry.auth_event(sys.modules[__name__], "password_ok", user["role"])
             flash(f"Welcome, {user['display_name']}.", "success")
             if user["role"]=="participant":
                 c=active_contest(get_db()); reg=participant_registered(c["id"],user["id"],get_db()) if c else None
                 if reg and reg["temporary_password"]: return redirect(url_for("change_password"))
             return redirect(url_for("index"))
         attempts.append(now_ts); LOGIN_ATTEMPTS[client]=attempts
+        telemetry.auth_event(sys.modules[__name__], "password_fail")
         flash("Invalid username or password.", "danger")
         return render_template(template, staff_open=True)
     return render_template(template)
@@ -1260,6 +1285,7 @@ def _domains_text(cfg) -> str:
 
 
 def _google_fail(message: str):
+    telemetry.auth_event(sys.modules[__name__], "google_fail", message)
     flash(message, "danger")
     return redirect(url_for("login"))
 
@@ -1324,6 +1350,7 @@ def _unique_username(conn, email: str) -> str:
 
 @app.get("/auth/google")
 def google_login():
+    telemetry.auth_event(sys.modules[__name__], "google_start")
     cfg = google_login_config()
     if not cfg:
         abort(404)
@@ -1374,6 +1401,7 @@ def google_callback():
         first_link = not account["google_sub"]
         conn.execute("UPDATE accounts SET google_sub=COALESCE(google_sub,?), display_name=CASE WHEN ? THEN ? ELSE display_name END WHERE id=?", (sub, 1 if first_link else 0, name, account["id"]))
         session.clear(); session["user_id"] = account["id"]
+        telemetry.auth_event(sys.modules[__name__], "google_ok_staff")
         fx.audit(conn, "auth.google_staff", contest_id=contest["id"] if contest else None, object_type="account", object_id=account["id"], detail=f"{email} signed in with Google", actor=account)
         conn.commit()
         flash("Welcome, " + (name if first_link else account["display_name"]) + ".", "success")
@@ -1391,6 +1419,7 @@ def google_callback():
             session["google_pending"] = {"sub": sub, "email": email, "name": account["display_name"] or name, "account_id": account["id"], "at": time.time()}
             return redirect(url_for("google_complete"))
         session.clear(); session["user_id"] = account["id"]
+        telemetry.auth_event(sys.modules[__name__], "google_ok_returning_student")
         flash(f"Welcome, {account['display_name']}.", "success")
         return redirect(url_for("index"))
     if not contest:
@@ -1455,6 +1484,7 @@ def google_complete():
                      actor={"id": aid, "display_name": display_name})
             conn.commit()
             session.clear(); session["user_id"] = aid
+            telemetry.auth_event(sys.modules[__name__], "google_registered", "pending approval" if approval == "PENDING" else "")
             flash("Registration submitted and awaiting approval." if approval == "PENDING" else "You are registered. Good luck!", "success")
             return redirect(url_for("dashboard"))
         except ValueError as exc:

@@ -146,7 +146,7 @@ ${CAPS_WORKER}
 EOF
 cat > "$INQ_HOME/inq" <<EOF
 #!/usr/bin/env bash
-# inq up -d | down | ps | logs -f | restart | status | preflight | report | update | workers N | new-contest | https-on | https-off | backup | google-setup | staff-url | add-director | add-staff | watch | stats
+# inq up -d | down | ps | logs -f | restart | status | preflight | report [deep] | contest-report [id] | update | workers N | new-contest | https-on | https-off | backup | google-setup | staff-url | add-director | add-staff | watch | stats
 # (anything else is passed to docker compose)
 set -e
 HOME_DIR="$INQ_HOME"
@@ -162,7 +162,10 @@ case "\${1:-}" in
     echo; echo "=== host: container CPU and memory ==="; docker stats --no-stream --format 'table {{.Name}}\\t{{.CPUPerc}}\\t{{.MemUsage}}' 2>/dev/null | grep -E 'NAME|inquisitor' || true
     echo; echo "=== web errors in the last 15 min (health checks hidden) ==="; dc logs --since 15m web 2>&1 | grep -v healthz | grep -iE '" 5[0-9][0-9] |error|traceback' | tail -15 || true
     echo; echo "=== judge worker log, last 15 lines ==="; dc logs --since 15m worker 2>&1 | tail -15 || true
-    echo; echo "=== app report ==="; dc exec -T web python manage.py report ;;
+    echo; echo "=== app report ==="; if [ "\${2:-}" = "deep" ]; then dc exec -T web python manage.py report --deep; else dc exec -T web python manage.py report; fi ;;
+  contest-report)
+    # after a contest: judge performance from the database plus request counts from the web log
+    shift; dc logs --no-log-prefix --since 72h web 2>/dev/null | dc exec -T web python manage.py contest-report --logs \${1:+--id "\$1"} ;;
   new-contest) shift; dc exec -T worker python manage.py new-contest "\$@" ;;
   update)
     git fetch --quiet origin && git pull --quiet --ff-only

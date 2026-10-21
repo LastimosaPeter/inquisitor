@@ -144,13 +144,25 @@ def stats_command():
             conn.close()
 
 
-def report_command():
+def report_command(deep=False):
     """The same report as the director's Diagnostics page, as plain text (paste it into a chat to ask what is going on)."""
     import diagnostics
     with app.app.app_context():
         conn = app.db_connect()
         try:
-            print(diagnostics.render_text(diagnostics.collect(app, conn)), end="")
+            print(diagnostics.render_text(diagnostics.collect(app, conn, deep=deep)), end="")
+        finally:
+            conn.close()
+
+
+def contest_report_command(args):
+    """After the contest: how did the app do? Uses the database, and the web access log if it is piped in (--logs)."""
+    import diagnostics
+    log_text = sys.stdin.read() if getattr(args, "logs", False) else None
+    with app.app.app_context():
+        conn = app.db_connect()
+        try:
+            print(diagnostics.contest_report(app, conn, getattr(args, "id", None), log_text), end="")
         finally:
             conn.close()
 
@@ -342,7 +354,7 @@ def preflight_command(args):
 
 def main():
     parser = argparse.ArgumentParser(description="Inquisitor management utility")
-    parser.add_argument("command", choices=["init", "backup", "check", "staff-path", "add-director", "add-staff", "stats", "new-contest", "preflight", "report"])
+    parser.add_argument("command", choices=["init", "backup", "check", "staff-path", "add-director", "add-staff", "stats", "new-contest", "preflight", "report", "contest-report"])
     parser.add_argument("--email", help="add-director: the director's ADNU email")
     parser.add_argument("--also", help="add-director/add-staff: a second address that also signs in as this person")
     parser.add_argument("--id", help="new-contest: id for the new contest")
@@ -353,6 +365,8 @@ def main():
     parser.add_argument("--reg-close", dest="reg_close", help="new-contest: when registration closes (default 15 minutes after the start)")
     parser.add_argument("--clone-from", dest="clone_from", help="new-contest: contest to copy problems from (default: the active one)")
     parser.add_argument("--judge", action="append", help="new-contest: ADNU email of a judge (repeat for more)")
+    parser.add_argument("--logs", action="store_true", help="contest-report: read the web access log from standard input")
+    parser.add_argument("--deep", action="store_true", help="report: include the history and internals")
     parser.add_argument("--role", help="add-staff: director, chief_judge, judge, problem_setter, technical_admin, registration_staff or spectator")
     args = parser.parse_args()
     if args.command == "add-director":
@@ -363,8 +377,10 @@ def main():
         return new_contest_command(args)
     if args.command == "preflight":
         return preflight_command(args)
+    if args.command == "contest-report":
+        return contest_report_command(args)
     if args.command == "report":
-        return report_command()
+        return report_command(deep=getattr(args, "deep", False))
     {"init": init_command, "backup": backup_command, "check": check_command, "staff-path": staff_path_command, "stats": stats_command}[args.command]()
 
 
