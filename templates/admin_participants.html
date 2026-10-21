@@ -23,10 +23,20 @@
 
 <section class="card people-list-card">
   <div class="card-head"><div><span class="eyebrow">{{ contest['name'] }}</span><h2>Contestants & check-in</h2></div><span class="badge neutral">{{ participants|length }}</span></div>
+  <form method="post" action="{{ url_for('admin_bulk_registration') }}" id="bulk-form" class="bulk-bar">
+    <span class="muted">Several at once:</span>
+    <button type="button" class="tiny" data-select="all">Select all</button>
+    <button type="button" class="tiny" data-select="registered">Select registered</button>
+    <button type="button" class="tiny" data-select="none">Select none</button>
+    <button type="submit" class="tiny" name="action" value="unregister_selected" data-confirm="Unregister the selected contestants from this contest? Anyone who already has submissions is kept.">Unregister selected</button>
+    <button type="submit" class="tiny" name="action" value="register_selected">Register selected</button>
+    <button type="submit" class="tiny" name="action" value="unregister_unsubmitted" data-confirm="Unregister EVERYONE in this contest who has not submitted anything?">Unregister all who have not submitted</button>
+  </form>
   <div class="people-list">
   {% for p in participants %}
     <article class="person-record {{ 'disqualified-row' if p['disqualified'] else '' }}">
       <div class="person-primary">
+        <label class="select-box" title="Select"><input type="checkbox" name="ids" value="{{ p['id'] }}" form="bulk-form" data-registered="{{ 1 if p['registered'] else 0 }}"></label>
         <strong>{{ p['display_name'] }}</strong>
         <span>{{ p['department'] or 'Department not set' }}</span>
         {% if p['college'] %}<span>{{ p['college'] }}</span>{% endif %}

@@ -178,3 +178,21 @@
   (function loop() { setTimeout(function () { refresh(); loop(); }, failures > 2 ? 45000 : 15000); })();
   document.addEventListener('visibilitychange', function () { if (!document.hidden) refresh(); });
 })();
+
+
+/* Contestants page: select several contestants and register or unregister them together. */
+(function () {
+  var bar = document.getElementById('bulk-form');
+  if (!bar) return;
+  var boxes = function () { return Array.prototype.slice.call(document.querySelectorAll('input[name="ids"][form="bulk-form"]')); };
+  bar.addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-select]');
+    if (!b) return;
+    var mode = b.getAttribute('data-select');
+    boxes().forEach(function (x) { x.checked = mode === 'all' || (mode === 'registered' && x.getAttribute('data-registered') === '1'); });
+  });
+  bar.addEventListener('submit', function (e) {
+    var s = e.submitter, msg = s && s.getAttribute('data-confirm');
+    if (msg && !window.confirm(msg)) e.preventDefault();
+  });
+})();

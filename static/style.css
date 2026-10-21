@@ -373,3 +373,8 @@ body.presentation ::-webkit-scrollbar-corner{background:#0d1014}
 
 /* Judge feedback shown to the contestant */
 .judge-feedback{margin-top:8px;padding:8px 10px;border-left:3px solid #4f86d6;border-radius:6px;background:rgba(79,134,214,.1);font-size:12.5px;line-height:1.5;white-space:pre-wrap}
+
+/* Contestants page: bulk bar and row checkboxes */
+.bulk-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:4px 0 12px}
+.select-box{display:inline-flex;align-items:center;margin-right:8px;vertical-align:middle}
+.select-box input{width:16px;height:16px}

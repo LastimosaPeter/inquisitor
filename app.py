@@ -570,9 +570,10 @@ def init_db():
         conn.execute("UPDATE contests SET active=1 WHERE id=?", (first["id"],))
         active_row = first
     contest_id = active_row["id"]
-    registrations_were_empty = conn.execute(
-        "SELECT COUNT(*) FROM registrations WHERE contest_id=?", (contest_id,)
-    ).fetchone()[0] == 0
+    # Only a database that has no registrations at all (brand new, or an old single-contest one being upgraded) gets everyone registered.
+    # It used to run for any active contest with nobody registered, so activating a new empty contest and restarting the site registered
+    # every participant account in it.
+    registrations_were_empty = conn.execute("SELECT COUNT(*) FROM registrations").fetchone()[0] == 0
 
     if os.environ.get("INQUISITOR_DEMO_ACCOUNTS", "1") != "0":
         demo_participant = conn.execute("SELECT id FROM accounts WHERE username='contestant'").fetchone()
@@ -2452,12 +2453,47 @@ def admin_toggle_registration(aid):
             flash("Cannot unregister a participant who already has submissions.", "danger")
         else:
             conn.execute("DELETE FROM registrations WHERE contest_id=? AND account_id=?", (contest["id"], aid))
+            fx.audit(conn, "participant.unregister", contest_id=contest["id"], object_type="account", object_id=aid, detail=acct["display_name"])
             conn.commit()
             flash("Participant unregistered from active contest.", "success")
     else:
         conn.execute("INSERT INTO registrations(contest_id,account_id,team_api_id) VALUES(?,?,?)", (contest["id"], aid, f"p-{aid}"))
+        fx.audit(conn, "participant.register", contest_id=contest["id"], object_type="account", object_id=aid, detail=acct["display_name"])
         conn.commit()
         flash("Participant registered for active contest.", "success")
+    return redirect(url_for("admin_participants"))
+
+
+@app.post("/admin/participants/bulk")
+@fx._staff_permission("participants")
+def admin_bulk_registration():
+    """Register or unregister many contestants of the active contest at once. Anyone who already has submissions is always kept."""
+    conn = get_db(); contest = active_contest(conn)
+    action = request.form.get("action", "")
+    if action not in {"unregister_selected", "register_selected", "unregister_unsubmitted"}:
+        abort(400)
+    if action == "unregister_unsubmitted":
+        ids = [r["account_id"] for r in conn.execute("SELECT account_id FROM registrations WHERE contest_id=?", (contest["id"],))]
+    else:
+        try: ids = sorted({int(x) for x in request.form.getlist("ids")})
+        except ValueError: abort(400)
+    if not ids:
+        flash("Select at least one contestant first.", "danger"); return redirect(url_for("admin_participants"))
+    changed, kept = 0, 0
+    for aid in ids:
+        acct = conn.execute("SELECT id FROM accounts WHERE id=? AND role='participant'", (aid,)).fetchone()
+        if not acct: continue
+        registered = participant_registered(contest["id"], aid, conn)
+        if action == "register_selected":
+            if not registered:
+                conn.execute("INSERT INTO registrations(contest_id,account_id,team_api_id) VALUES(?,?,?)", (contest["id"], aid, f"p-{aid}")); changed += 1
+        elif registered:
+            if conn.execute("SELECT 1 FROM submissions WHERE contest_id=? AND account_id=? LIMIT 1", (contest["id"], aid)).fetchone(): kept += 1
+            else: conn.execute("DELETE FROM registrations WHERE contest_id=? AND account_id=?", (contest["id"], aid)); changed += 1
+    word = "registered" if action == "register_selected" else "unregistered"
+    fx.audit(conn, "participant.bulk_" + word, contest_id=contest["id"], object_type="contest", object_id=contest["id"], detail=f"{changed} {word}" + (f", {kept} kept because they already have submissions" if kept else ""))
+    conn.commit()
+    flash(f"{changed} contestant(s) {word}." + (f" {kept} kept because they already have submissions." if kept else ""), "success")
     return redirect(url_for("admin_participants"))
 
 
