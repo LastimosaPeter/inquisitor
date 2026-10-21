@@ -9,6 +9,13 @@
     });
   }
   const clocks=[...document.querySelectorAll('.js-countdown')];
+  // Every clock follows the server's time, not this computer's, so everyone sees the same countdown.
+  var clockOffset=0;
+  (function(){
+    var meta=document.querySelector('meta[name="server-now"]');
+    var serverMs=meta?Date.parse(meta.content):NaN;
+    if(!isNaN(serverMs)) clockOffset=serverMs-Date.now();
+  })();
   const phase=document.getElementById('contest-phase');
 
   function format(ms){
@@ -25,7 +32,7 @@
       const raw=el.dataset.end;
       if(!raw){ el.textContent='--:--:--'; return; }
       const end=new Date(raw);
-      const ms=Math.max(0,end-Date.now());
+      const ms=Math.max(0,end-(Date.now()+clockOffset));
       el.textContent=format(ms);
       if(index===0) primarySeconds=Math.floor(ms/1000);
     });

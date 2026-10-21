@@ -1057,6 +1057,7 @@ def inject_globals():
         "cstate": contest_state(contest) if contest else None,
         "languages": LANGUAGES,
         "compiler_status": compiler_status(),
+        "server_now_iso": iso(utcnow()),
         "theme": "dark" if (request.cookies.get("theme") or os.environ.get("INQUISITOR_DEFAULT_THEME", "light")) == "dark" else "light",
         "light_css_url": url_for("light_css", a=request.args.get("accent") or light_accent(), v=_stylesheet_version()),
         "google_login": google_login_config(),

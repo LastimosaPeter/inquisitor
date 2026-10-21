@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="{{ theme }}">
+  <meta name="server-now" content="{{ server_now_iso }}">
   <title>{% block title %}Inquisitor{% endblock %} · Inquisitor</title>
   {% if theme == 'light' %}<link rel="stylesheet" href="{{ light_css_url }}">{% else %}<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">{% endif %}
   <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" sizes="any">
