@@ -332,3 +332,7 @@ body.presentation ::-webkit-scrollbar-corner{background:#0d1014}
 
 /* ---- Problem cards on the public page are information only ---- */
 .problem-card.static{cursor:default;pointer-events:none;user-select:text}
+
+/* Projector: the auto-scroll switch sits quietly in the corner, per screen */
+.autoscroll-toggle{position:fixed;right:14px;bottom:12px;z-index:5;padding:6px 10px;border:1px solid #2d3339;border-radius:8px;background:#11151b;color:#8b949e;font:600 11px/1 inherit;letter-spacing:.03em;opacity:.45;cursor:pointer}
+.autoscroll-toggle:hover,.autoscroll-toggle:focus-visible,.autoscroll-toggle[aria-pressed="true"]{opacity:1;color:#d7dde4}

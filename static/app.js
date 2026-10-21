@@ -87,12 +87,26 @@
 })();
 
 
+  // Auto-scroll is the choice of whoever is looking at this screen (remembered in this browser only).
   const projectorScroll=document.querySelector('[data-projector-autoscroll="1"]');
   if(projectorScroll){
+    const scrollButton=document.getElementById('autoscroll-toggle');
+    const fromAddress=new URLSearchParams(location.search).get('scroll');
+    let scrolling=false;
+    try{ scrolling=localStorage.getItem('inq-projector-scroll')==='on'; }catch(e){}
+    if(fromAddress==='1') scrolling=true;
+    if(fromAddress==='0') scrolling=false;
+    const showScrollState=()=>{ if(scrollButton){ scrollButton.textContent='Auto-scroll: '+(scrolling?'on':'off'); scrollButton.setAttribute('aria-pressed',scrolling?'true':'false'); } };
+    showScrollState();
+    if(scrollButton) scrollButton.addEventListener('click',()=>{
+      scrolling=!scrolling;
+      try{ localStorage.setItem('inq-projector-scroll',scrolling?'on':'off'); }catch(e){}
+      showScrollState();
+    });
     let direction=1;
     let pause=false;
     setInterval(()=>{
-      if(pause) return;
+      if(!scrolling||pause) return;
       const max=projectorScroll.scrollHeight-projectorScroll.clientHeight;
       if(max<=0) return;
       const next=projectorScroll.scrollTop + (direction*1.2);
