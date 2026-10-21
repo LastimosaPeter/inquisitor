@@ -241,6 +241,15 @@ Run these on the server (`~/inquisitor/inq ...`):
 | `inq workers N` | Sets the number of parallel judge threads (1 to 9) and restarts the judge. |
 | `inq stats`, `inq watch` | Live contest numbers; server load. |
 
+## Contest day: timing and phase notes
+
+- **Lifecycle phase.** Put the contest on **Scheduled** (or **Running**) well before the start. Both follow the clock: the contest shows UPCOMING until the start time, switches to RUNNING by itself, and ends at start + duration. **Registration Open** does not start the contest by itself (the latest version does once the start time has passed, but do not rely on it).
+- **The box at the top right** shows the phase and the time left until the contest **ends**.
+- **Start time** is entered in Philippine time. If you move the start time, check that **Registration closes** still makes sense.
+- **Clocks** follow the server's time, so a wrong clock on a student's computer does not change their countdown.
+- **Problems** are hidden from students until the contest is RUNNING. Directors, chief judges, judges and problem setters can always read them (read only).
+- **Check** `https://<your site>/contest/<contest id>` after any change: Start, Phase and the countdown should say what you expect.
+
 ## Update to a newer version
 
 ```bash

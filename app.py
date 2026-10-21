@@ -702,10 +702,10 @@ def contest_state(contest):
     elif lifecycle == "draft":
         phase = "DRAFT"
         remaining = contest["duration_minutes"] * 60
-    elif lifecycle == "registration":
+    elif lifecycle == "registration" and not (start and now >= start):
         phase = "REGISTRATION"
         remaining = max(0, int((start - now).total_seconds())) if start and now < start else contest["duration_minutes"] * 60
-    elif lifecycle == "registration_closed":
+    elif lifecycle == "registration_closed" and not (start and now >= start):
         phase = "REGISTRATION CLOSED"
         remaining = max(0, int((start - now).total_seconds())) if start and now < start else contest["duration_minutes"] * 60
     elif lifecycle == "practice" or ("practice_mode" in contest.keys() and contest["practice_mode"]):
@@ -1204,6 +1204,9 @@ GOOGLE_DOMAIN_ERROR = "That Google account is not an ADNU account. Sign in with 
 
 def registration_is_closed(contest) -> bool:
     now = utcnow()
+    started = parse_dt(contest["start_at"]) if contest["start_at"] else None
+    if started and now >= started and contest["lifecycle_phase"] not in {"draft", "practice"}:
+        return True   # the contest has started: registration is over even if the phase was never changed
     reg_start = parse_dt(contest["registration_start"]) if contest["registration_start"] else None
     reg_end = parse_dt(contest["registration_end"]) if contest["registration_end"] else None
     return bool((not contest["signup_open"]) or (reg_start and now < reg_start) or (reg_end and now > reg_end)
