@@ -175,6 +175,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         "feedback_at TEXT",
     ]:
         _add_column(conn, "submissions", definition)
+    import diagnostics
+    diagnostics.ensure_tables(conn)
 
     # Google sign-in: the stable Google account id (sub) of a student who signed in with ADNU Google.
     _add_column(conn, "accounts", "google_sub TEXT")
@@ -1261,6 +1263,24 @@ def network_status():
     core=_core(); conn=core.get_db(); contest=core.active_contest(conn); disk=shutil.disk_usage(core.DATA_DIR); comp=core.compiler_status(); queue=conn.execute("SELECT COUNT(*) FROM submissions WHERE contest_id=? AND status='PENDING'",(contest["id"],)).fetchone()[0]; judging=conn.execute("SELECT COUNT(*) FROM submissions WHERE contest_id=? AND status='JUDGING'",(contest["id"],)).fetchone()[0]
     health={"db":"OK","queue":queue,"judging":judging,"disk_free":disk.free,"disk_total":disk.total,"judge_backend":os.environ.get("INQUISITOR_JUDGE_BACKEND","local"),"host":os.environ.get("COMPUTERNAME") or os.environ.get("HOSTNAME") or "localhost"}
     return render_template("v1_network.html",health=health,compiler=comp)
+
+
+@bp.get("/director/diagnostics")
+@_staff_permission("network")
+def diagnostics_page():
+    import diagnostics
+    core=_core(); conn=core.get_db()
+    report=diagnostics.collect(core,conn)
+    return render_template("v1_diagnostics.html",report=report,report_text=diagnostics.render_text(report))
+
+
+@bp.get("/director/diagnostics.txt")
+@_staff_permission("network")
+def diagnostics_text():
+    import diagnostics
+    core=_core(); conn=core.get_db()
+    resp=make_response(diagnostics.render_text(diagnostics.collect(core,conn))); resp.mimetype="text/plain"; resp.headers["Cache-Control"]="no-store"
+    return resp
 
 
 # ---------- API settings ----------

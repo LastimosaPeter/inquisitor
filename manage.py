@@ -144,6 +144,17 @@ def stats_command():
             conn.close()
 
 
+def report_command():
+    """The same report as the director's Diagnostics page, as plain text (paste it into a chat to ask what is going on)."""
+    import diagnostics
+    with app.app.app_context():
+        conn = app.db_connect()
+        try:
+            print(diagnostics.render_text(diagnostics.collect(app, conn)), end="")
+        finally:
+            conn.close()
+
+
 def _parse_local(text: str):
     """'2026-10-20 16:30' (Philippine time) -> datetime."""
     from datetime import datetime
@@ -331,7 +342,7 @@ def preflight_command(args):
 
 def main():
     parser = argparse.ArgumentParser(description="Inquisitor management utility")
-    parser.add_argument("command", choices=["init", "backup", "check", "staff-path", "add-director", "add-staff", "stats", "new-contest", "preflight"])
+    parser.add_argument("command", choices=["init", "backup", "check", "staff-path", "add-director", "add-staff", "stats", "new-contest", "preflight", "report"])
     parser.add_argument("--email", help="add-director: the director's ADNU email")
     parser.add_argument("--also", help="add-director/add-staff: a second address that also signs in as this person")
     parser.add_argument("--id", help="new-contest: id for the new contest")
@@ -352,6 +363,8 @@ def main():
         return new_contest_command(args)
     if args.command == "preflight":
         return preflight_command(args)
+    if args.command == "report":
+        return report_command()
     {"init": init_command, "backup": backup_command, "check": check_command, "staff-path": staff_path_command, "stats": stats_command}[args.command]()
 
 

@@ -32,6 +32,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from judge import LANGUAGES, compiler_status, detect_language_from_filename, judge_backend, judge_submission
 import features_v1 as fx
 import theme
+import diagnostics
 
 BASE_DIR = Path(__file__).resolve().parent
 # Vercel presentation mode uses the only writable area available to the
@@ -1104,6 +1105,21 @@ def security_headers(response):
         if app.config.get("SESSION_COOKIE_SECURE"):
             response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return response
+
+
+@app.errorhandler(Exception)
+def remember_server_errors(exc):
+    """Unexpected failures are written to the diagnostics page (path and message only), then shown as a normal 500."""
+    from werkzeug.exceptions import HTTPException
+    if isinstance(exc, HTTPException):
+        return exc
+    import diagnostics
+    me = None
+    try: me = current_user()
+    except Exception: pass
+    diagnostics.record_error(sys.modules[__name__], exc, request.method, request.path, me["username"] if me else "")
+    print("Server error:", repr(exc), flush=True)
+    return make_response("Internal Server Error: something went wrong on our side. Please tell a judge or director.", 500)
 
 
 @app.get("/healthz")
@@ -3221,7 +3237,8 @@ def judging_worker():
                    WHERE s.status='PENDING' ORDER BY s.id LIMIT 1"""
             ).fetchone()
             if not sub:
-                time.sleep(0.5); continue
+                diagnostics.heartbeat(sys.modules[__name__], conn, "idle"); time.sleep(0.5); continue
+            diagnostics.heartbeat(sys.modules[__name__], conn, f"judging #{sub['id']}")
             started=iso(utcnow())
             claimed=conn.execute("UPDATE submissions SET status='JUDGING',judging_started_at=?,detail='Running on Inquisitor judge worker.' WHERE id=? AND status='PENDING'",(started,sub["id"]))
             conn.commit()
@@ -3235,6 +3252,7 @@ def judging_worker():
             wrote=conn.execute("UPDATE submissions SET status='DONE',verdict=?,runtime_ms=?,detail=?,judged_at=? WHERE id=? AND status='JUDGING' AND manual_override=0",(result["verdict"],result["runtime_ms"],result["detail"],judged,sub["id"]))
             if wrote.rowcount!=1:
                 conn.commit(); continue
+            diagnostics.heartbeat(sys.modules[__name__], conn, "idle", judged_inc=1)
             contest=contest_by_id(sub["contest_id"],conn); done=conn.execute("SELECT * FROM submissions WHERE id=?",(sub["id"],)).fetchone()
             append_event(conn,sub["contest_id"],"judgements",f"j-{sub['id']}",api_judgement(done)); problem=conn.execute("SELECT * FROM problems WHERE id=?",(sub["problem_id"],)).fetchone(); fx.on_judgement(conn,done,problem); conn.commit()
         except Exception as exc:

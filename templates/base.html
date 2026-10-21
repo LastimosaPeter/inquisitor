@@ -43,6 +43,7 @@
         {% if staff_role in ['contest_director','chief_judge'] %}<a href="{{ url_for('v1.similarity_review') }}" class="{{ 'active' if request.endpoint=='v1.similarity_review' else '' }}">Similarity Review</a>{% endif %}
         {% if staff_role in ['contest_director','chief_judge'] %}<a href="{{ url_for('v1.feedback_report') }}" class="{{ 'active' if request.endpoint in ['v1.feedback_report'] else '' }}">Feedback Report</a>{% endif %}
         {% if staff_role in ['contest_director','technical_admin'] %}<a href="{{ url_for('v1.network_status') }}" class="{{ 'active' if request.endpoint=='v1.network_status' else '' }}">System Status</a><a href="{{ url_for('v1.backups') }}" class="{{ 'active' if request.endpoint=='v1.backups' else '' }}">Backups</a><a href="{{ url_for('admin_api') }}" class="{{ 'active' if request.endpoint in ['admin_api','v1.api_settings'] else '' }}">Contest API</a>{% endif %}
+        {% if staff_role in ['contest_director','technical_admin'] %}<a href="{{ url_for('v1.diagnostics_page') }}" class="{{ 'active' if request.endpoint=='v1.diagnostics_page' else '' }}">Diagnostics</a><a href="{{ url_for('v1.backups') }}" class="{{ 'active' if request.endpoint=='v1.backups' else '' }}">Backups</a><a href="{{ url_for('admin_api') }}" class="{{ 'active' if request.endpoint in ['admin_api','v1.api_settings'] else '' }}">Contest API</a>{% endif %}
       {% elif me and me['role']=='admin' %}
         <div class="nav-section">Contest Director</div>
         <a href="{{ url_for('admin_dashboard') }}" class="{{ 'active' if request.endpoint=='admin_dashboard' else '' }}">Overview</a>
@@ -61,6 +62,7 @@
         <a href="{{ url_for('v1.audit_log') }}" class="{{ 'active' if request.endpoint=='v1.audit_log' else '' }}">Audit Log</a>
         <div class="nav-section">System</div>
         <a href="{{ url_for('v1.network_status') }}" class="{{ 'active' if request.endpoint=='v1.network_status' else '' }}">System Status</a>
+        <a href="{{ url_for('v1.diagnostics_page') }}" class="{{ 'active' if request.endpoint=='v1.diagnostics_page' else '' }}">Diagnostics</a>
         <a href="{{ url_for('v1.backups') }}" class="{{ 'active' if request.endpoint=='v1.backups' else '' }}">Backups</a>
         <a href="{{ url_for('admin_api') }}" class="{{ 'active' if request.endpoint in ['admin_api','v1.api_settings'] else '' }}">Contest API</a>
       {% endif %}
