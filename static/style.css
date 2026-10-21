@@ -370,3 +370,6 @@ body.presentation ::-webkit-scrollbar-corner{background:#0d1014}
   .rank-medal{transform:scale(.85)}
   .freeze-banner{flex-wrap:wrap;gap:8px;padding:12px}
 }
+
+/* Judge feedback shown to the contestant */
+.judge-feedback{margin-top:8px;padding:8px 10px;border-left:3px solid #4f86d6;border-radius:6px;background:rgba(79,134,214,.1);font-size:12.5px;line-height:1.5;white-space:pre-wrap}

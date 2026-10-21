@@ -1839,6 +1839,7 @@ def judge_console():
     elif show == "mine": where.append("s.claimed_by=?"); args.append(me["id"])
     elif show == "overridden": where.append("s.manual_override=1")
     elif show == "pending": where.append("s.status!='DONE'")
+    elif show == "needs_feedback": where.append("s.status='DONE' AND s.verdict IS NOT NULL AND s.verdict!='AC' AND s.feedback=''")
     else: show = "all"
     if prob: where.append("p.code=?"); args.append(prob)
     if q: where.append("(a.display_name LIKE ? OR a.username LIKE ?)"); args += [f"%{q}%", f"%{q}%"]
@@ -2017,6 +2018,29 @@ def review_release(sid):
     return redirect(url_for("judge_console"))
 
 
+FEEDBACK_MIN_CHARS = 10
+
+
+@app.post("/judge/submission/<int:sid>/feedback")
+@fx._staff_permission("judge")
+def review_feedback_edit(sid):
+    """Change the feedback of a submission that was already reviewed (the reviewing judge, or a director)."""
+    conn = get_db(); me = current_user()
+    sub = conn.execute("SELECT * FROM submissions WHERE id=?", (sid,)).fetchone()
+    if not sub: abort(404)
+    if not (sub["reviewed_by"] == me["id"] or me["role"] == "admin" or fx.staff_can("analytics")):
+        abort(403)
+    feedback = request.form.get("feedback", "").strip()
+    if sub["verdict"] != "AC" and len(feedback) < FEEDBACK_MIN_CHARS:
+        flash(f"Feedback is required when the verdict is not Accepted (at least {FEEDBACK_MIN_CHARS} characters).", "danger"); return redirect(url_for("review_submission", sid=sid))
+    if len(feedback) > 2000:
+        flash("Feedback is too long (2000 characters at most).", "danger"); return redirect(url_for("review_submission", sid=sid))
+    conn.execute("UPDATE submissions SET feedback=?, feedback_by=?, feedback_at=? WHERE id=?", (feedback, me["id"] if feedback else None, iso(utcnow()) if feedback else None, sid))
+    fx.audit(conn, "review.feedback", contest_id=sub["contest_id"], object_type="submission", object_id=str(sid), detail=feedback[:200] or "Feedback removed.")
+    conn.commit(); flash("Feedback saved.", "success")
+    return redirect(url_for("review_submission", sid=sid))
+
+
 @app.post("/judge/submission/<int:sid>/review")
 @fx._staff_permission("judge")
 def review_complete(sid):
@@ -2031,6 +2055,13 @@ def review_complete(sid):
     if verdict and verdict not in REVIEW_VERDICTS:
         flash("Invalid verdict.", "danger"); return redirect(url_for("review_submission", sid=sid))
     overriding = bool(verdict) and verdict != sub["verdict"]
+    feedback = request.form.get("feedback", "").strip()
+    final_verdict = verdict if overriding else sub["verdict"]
+    if final_verdict != "AC" and len(feedback) < FEEDBACK_MIN_CHARS:
+        flash(f"Tell the contestant what went wrong: feedback is required when the verdict is not Accepted (at least {FEEDBACK_MIN_CHARS} characters).", "danger")
+        return redirect(url_for("review_submission", sid=sid))
+    if len(feedback) > 2000:
+        flash("Feedback is too long (2000 characters at most).", "danger"); return redirect(url_for("review_submission", sid=sid))
     if overriding and not note:
         flash("Add a note explaining why you are overriding the auto-judge verdict.", "danger"); return redirect(url_for("review_submission", sid=sid))
     runtime_ms = sub["runtime_ms"]
@@ -2042,10 +2073,11 @@ def review_complete(sid):
         detail = f"Manual verdict by {me['display_name']}: {note}"
         cur = conn.execute(
             """UPDATE submissions SET verdict=?, auto_verdict=COALESCE(auto_verdict, verdict), manual_override=1, runtime_ms=?, detail=?,
-                      reviewed_by=?, reviewed_at=?, review_note=? WHERE id=? AND claimed_by=? AND reviewed_at IS NULL""",
-            (verdict, runtime_ms, detail, me["id"], now, note, sid, me["id"]))
+                      reviewed_by=?, reviewed_at=?, review_note=?, feedback=?, feedback_by=?, feedback_at=? WHERE id=? AND claimed_by=? AND reviewed_at IS NULL""",
+            (verdict, runtime_ms, detail, me["id"], now, note, feedback, me["id"] if feedback else None, now if feedback else None, sid, me["id"]))
     else:
-        cur = conn.execute("UPDATE submissions SET reviewed_by=?, reviewed_at=?, review_note=? WHERE id=? AND claimed_by=? AND reviewed_at IS NULL", (me["id"], now, note, sid, me["id"]))
+        cur = conn.execute("UPDATE submissions SET reviewed_by=?, reviewed_at=?, review_note=?, feedback=?, feedback_by=?, feedback_at=? WHERE id=? AND claimed_by=? AND reviewed_at IS NULL",
+                           (me["id"], now, note, feedback, me["id"] if feedback else None, now if feedback else None, sid, me["id"]))
     if cur.rowcount != 1:
         conn.rollback(); flash("This review could not be saved (the claim changed). Reload and try again.", "danger"); return redirect(url_for("review_submission", sid=sid))
     if overriding:

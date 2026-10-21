@@ -170,6 +170,9 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         "review_note TEXT NOT NULL DEFAULT ''",
         "manual_override INTEGER NOT NULL DEFAULT 0",
         "auto_verdict TEXT",
+        "feedback TEXT NOT NULL DEFAULT ''",
+        "feedback_by INTEGER",
+        "feedback_at TEXT",
     ]:
         _add_column(conn, "submissions", definition)
 
@@ -935,6 +938,51 @@ def similarity_summary(conn, contest_id: str, *, scope: str, threshold: float, p
     info["participants"] = len(people)
     info["flagged"] = sum(1 for p in people.values() if p["flagged"])
     return rows, info
+
+
+def _feedback_rows(conn, contest_id, show="all"):
+    where = "s.contest_id=? AND s.status='DONE' AND s.verdict IS NOT NULL AND s.verdict!='AC'"
+    if show == "missing": where += " AND s.feedback=''"
+    elif show == "given": where += " AND s.feedback!=''"
+    return conn.execute(
+        f"""SELECT s.id, s.language, s.verdict, s.submitted_at, s.feedback, s.feedback_at, s.review_note,
+                   a.display_name participant, a.email participant_email, p.code, p.title, fb.display_name feedback_by_name
+            FROM submissions s JOIN accounts a ON a.id=s.account_id JOIN problems p ON p.id=s.problem_id
+            LEFT JOIN accounts fb ON fb.id=s.feedback_by
+            WHERE {where} ORDER BY a.display_name, p.ordinal, s.id""", (contest_id,)).fetchall()
+
+
+@bp.get("/director/feedback")
+@_staff_permission("analytics")
+def feedback_report():
+    core=_core(); conn=core.get_db(); contest=core.active_contest(conn)
+    show = request.args.get("show", "all")
+    if show not in {"all", "missing", "given"}: show = "all"
+    rows = _feedback_rows(conn, contest["id"], show)
+    allrows = _feedback_rows(conn, contest["id"], "all")
+    per = {}
+    for r in allrows:
+        d = per.setdefault(r["participant"], {"total": 0, "given": 0}); d["total"] += 1; d["given"] += 1 if r["feedback"] else 0
+    totals = {"not_accepted": len(allrows), "given": sum(1 for r in allrows if r["feedback"])}
+    totals["missing"] = totals["not_accepted"] - totals["given"]
+    return render_template("v1_feedback.html", contest=contest, rows=rows, per=per, totals=totals, show=show)
+
+
+@bp.get("/director/feedback.csv")
+@_staff_permission("analytics")
+def feedback_csv():
+    core=_core(); conn=core.get_db(); contest=core.active_contest(conn)
+    def safe(v):
+        v = "" if v is None else str(v)
+        return "'" + v if v[:1] in ("=", "+", "-", "@", "\t", "\r") else v   # a spreadsheet must never run a cell as a formula
+    out = io.StringIO(); w = csv.writer(out)
+    w.writerow(["submission", "participant", "email", "problem", "title", "language", "verdict", "submitted_at", "feedback", "feedback_by", "feedback_at"])
+    for r in _feedback_rows(conn, contest["id"], "all"):
+        w.writerow([r["id"], safe(r["participant"]), safe(r["participant_email"]), r["code"], safe(r["title"]), r["language"], r["verdict"], r["submitted_at"], safe(r["feedback"]), safe(r["feedback_by_name"]), r["feedback_at"] or ""])
+    resp = make_response("\ufeff" + out.getvalue()); resp.mimetype = "text/csv"
+    resp.headers["Content-Disposition"] = f"attachment; filename=feedback-{contest['id']}.csv"
+    audit(conn, "feedback.export", contest_id=contest["id"], object_type="contest", object_id=contest["id"], detail="Feedback report downloaded."); conn.commit()
+    return resp
 
 
 @bp.route("/director/similarity", methods=["GET", "POST"])

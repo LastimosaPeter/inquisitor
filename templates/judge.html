@@ -14,7 +14,7 @@
     <div class="card-head"><div><span class="eyebrow">Live queue</span><h2>Submissions</h2></div><span class="badge live">Judge active</span></div>
     {% if my_claim %}<div class="notice"><strong>Your current review:</strong> submission #{{ my_claim['id'] }} ({{ my_claim['participant_name'] }}, problem {{ my_claim['code'] }}). Finish or release it before claiming another. <a class="text-link" href="{{ url_for('review_submission', sid=my_claim['id']) }}">Continue review</a></div>{% endif %}
     <form method="get" class="inline-team-form" style="margin:10px 0">
-      <select name="show">{% for key,label in [('all','All submissions'),('unreviewed','Awaiting code review'),('claimed','Being reviewed now'),('mine','Mine'),('overridden','Manually overridden'),('pending','Still judging')] %}<option value="{{ key }}" {{ 'selected' if show==key }}>{{ label }}</option>{% endfor %}</select>
+      <select name="show">{% for key,label in [('all','All submissions'),('unreviewed','Awaiting code review'),('claimed','Being reviewed now'),('mine','Mine'),('overridden','Manually overridden'),('needs_feedback','Not accepted, no feedback yet'),('pending','Still judging')] %}<option value="{{ key }}" {{ 'selected' if show==key }}>{{ label }}</option>{% endfor %}</select>
       <select name="problem"><option value="">All problems</option>{% for c in problem_codes %}<option value="{{ c }}" {{ 'selected' if prob==c }}>{{ c }}</option>{% endfor %}</select>
       <input type="search" name="q" value="{{ q }}" placeholder="Contestant name">
       <button class="tiny" type="submit">Filter</button>

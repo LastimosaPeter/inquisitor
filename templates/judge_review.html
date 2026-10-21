@@ -23,14 +23,17 @@
         {% if state=='REVIEWED' %}Reviewed{% elif mine %}Locked to you{% elif state=='CLAIMED' %}Locked{% else %}Open{% endif %}</h2>
       {% if state=='REVIEWED' %}
         <p class="muted">Reviewed by <strong>{{ sub['reviewed_by_name'] }}</strong> on {{ sub['reviewed_at'] }}.</p>
-        {% if sub['review_note'] %}<p>{{ sub['review_note'] }}</p>{% endif %}
+        {% if sub['review_note'] %}<p><span class="eyebrow">Internal note</span><br>{{ sub['review_note'] }}</p>{% endif %}
+        <p><span class="eyebrow">Feedback to the contestant</span><br>{% if sub['feedback'] %}{{ sub['feedback'] }}{% else %}<span class="badge warn">None yet</span>{% endif %}</p>
+        {% if me['id']==sub['reviewed_by'] or me['role']=='admin' %}<form method="post" action="{{ url_for('review_feedback_edit', sid=sub['id']) }}" class="form-stack"><label>{{ 'Edit feedback' if sub['feedback'] else 'Add feedback' }}<textarea name="feedback" rows="3" maxlength="2000" {{ 'required' if sub['verdict']!='AC' else '' }}>{{ sub['feedback'] }}</textarea></label><button class="tiny" type="submit">Save feedback</button></form>{% endif %}
       {% elif mine %}
         <p class="muted">Nobody else can review or change this submission while you hold it. The claim is released automatically after {{ claim_minutes }} minutes without activity.</p>
         <form method="post" action="{{ url_for('review_complete', sid=sub['id']) }}" class="form-stack">
           <label>Verdict<select name="verdict"><option value="">Keep auto-judge verdict ({{ sub['verdict'] or '—' }})</option>
             {% for v in verdicts %}{% if v != sub['verdict'] %}<option value="{{ v }}">Change to {{ v }}</option>{% endif %}{% endfor %}</select></label>
           <label>Runtime override (ms, optional)<input type="number" name="runtime_ms" min="0" placeholder="Only used if you change the verdict"></label>
-          <label>Review note<textarea name="note" rows="4" placeholder="What did you check? Required if you change the verdict."></textarea></label>
+          <label>Feedback to the contestant <small class="muted">(they will read this: what went wrong and how to fix it)</small><textarea name="feedback" id="feedback-box" rows="4" maxlength="2000" {{ 'required' if sub['verdict']!='AC' else '' }} placeholder="{{ 'Required: explain why this was not accepted.' if sub['verdict']!='AC' else 'Optional when the verdict is Accepted.' }}"></textarea></label>
+          <label>Internal note <small class="muted">(only staff see this)</small><textarea name="note" rows="3" placeholder="What did you check? Required if you change the verdict."></textarea></label>
           <button class="button" type="submit">Finish review</button>
         </form>
         <form method="post" action="{{ url_for('review_release', sid=sub['id']) }}" style="margin-top:8px"><button class="tiny" type="submit">Release without reviewing</button></form>
@@ -47,3 +50,8 @@
   </aside>
 </div>
 {% endblock %}
+{% block scripts %}<script>
+(function(){var sel=document.querySelector('select[name="verdict"]'),box=document.getElementById('feedback-box');if(!sel||!box)return;var kept={{ (sub['verdict'] or '')|tojson }};
+function sync(){var final=sel.value||kept;box.required=final!=='AC';box.placeholder=final!=='AC'?'Required: explain why this was not accepted.':'Optional when the verdict is Accepted.';}
+sel.addEventListener('change',sync);sync();})();
+</script>{% endblock %}
