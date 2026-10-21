@@ -502,12 +502,16 @@ def contest_report(core, conn, contest_id: str | None = None, log_text: str | No
     def t(v): return core.parse_dt(v) if v else None
     waits, runs, per_lang, per_prob = [], [], {}, {}
     events = []
+    rejudged = 0
     je_students = set()
     for r in rows:
         a, b, d = t(r["submitted_at"]), t(r["judging_started_at"]), t(r["judged_at"])
         w = (b - a).total_seconds() if a and b else None
         j = (d - b).total_seconds() if b and d else None
-        if w is not None: waits.append(w); events += [(a, 1), (b, -1)]
+        if w is not None and w > 900:
+            rejudged += 1                       # judged long after it was submitted: almost always a judge pressing Rejudge
+        elif w is not None:
+            waits.append(w); events += [(a, 1), (b, -1)]
         if j is not None: runs.append(j)
         L = per_lang.setdefault(r["language"], {"n": 0, "j": []}); L["n"] += 1
         if j is not None: L["j"].append(j)
@@ -529,6 +533,8 @@ def contest_report(core, conn, contest_id: str | None = None, log_text: str | No
         out += [f"  Time a submission waited before judging started: average {sum(waits) / len(waits):.1f}s, median {_pct(waits, .5):.1f}s, 95th percentile {_pct(waits, .95):.1f}s, worst {max(waits):.1f}s",
                 f"  Waited more than 30 s: {slow30} of {len(waits)} ({100 * slow30 / len(waits):.1f}%); more than 60 s: {slow60}",
                 f"  Most submissions waiting at the same moment: {peak_depth}" + (f" at {core.localdt(core.iso(peak_at))}" if peak_at else "")]
+    if rejudged:
+        out.append(f"  {rejudged} submission(s) were judged more than 15 minutes after they were submitted: a judge pressed Rejudge (left out of the waiting figures above)")
     if runs:
         out.append(f"  Judging time per submission: average {sum(runs) / len(runs):.1f}s, 95th percentile {_pct(runs, .95):.1f}s, worst {max(runs):.1f}s")
     for lang, d in sorted(per_lang.items(), key=lambda kv: -kv[1]["n"]):
@@ -543,7 +549,7 @@ def contest_report(core, conn, contest_id: str | None = None, log_text: str | No
         i = int((a - start).total_seconds() // span)
         if 0 <= i < buckets:
             sub_n[i] += 1
-            if b: bw[i].append((b - a).total_seconds())
+            if b and (b - a).total_seconds() <= 900: bw[i].append((b - a).total_seconds())
     out += ["", f"TIMELINE (the contest in {int(span / 60)}-minute steps, start to end)",
             f"  Submissions     {spark(sub_n)}   peak {max(sub_n)} in {int(span / 60)} min",
             f"  Queue wait avg  {spark([sum(x) / len(x) if x else 0 for x in bw])}   worst step {max((sum(x) / len(x) if x else 0) for x in bw):.1f}s"]
