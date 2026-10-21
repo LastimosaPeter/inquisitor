@@ -19,7 +19,7 @@
       <input type="search" name="q" value="{{ q }}" placeholder="Contestant name">
       <button class="tiny" type="submit">Filter</button>
     </form>
-    <div class="table-wrap"><table><thead><tr><th>ID</th><th>Contestant</th><th>P</th><th>Language</th><th>Status</th><th>Verdict</th><th>Runtime</th><th>Code review</th><th></th></tr></thead><tbody>
+    <div class="table-wrap" data-live-region="judge-table" data-live-careful="1"><table><thead><tr><th>ID</th><th>Contestant</th><th>P</th><th>Language</th><th>Status</th><th>Verdict</th><th>Runtime</th><th>Code review</th><th></th></tr></thead><tbody>
     {% for s in queue %}{% set lang = judge_languages.get(s['language']) %}
     <tr>
       <td>#{{ s['id'] }}</td><td>{{ s['participant_name'] }}</td><td>{{ s['code'] }}</td><td>{{ lang.label if lang else s['language'] }}</td>

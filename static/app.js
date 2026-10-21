@@ -165,6 +165,8 @@
         var doc = new DOMParser().parseFromString(html, 'text/html');
         document.querySelectorAll('[data-live-region]').forEach(function (cur) {
           var fresh = doc.querySelector('[data-live-region="' + cur.getAttribute('data-live-region') + '"]');
+          // on the judge console, do not swap the table under the mouse or while a field inside it is being used
+          if (cur.hasAttribute('data-live-careful') && (cur.matches(':hover') || cur.contains(document.activeElement))) return;
           if (fresh && fresh.innerHTML !== cur.innerHTML) cur.innerHTML = fresh.innerHTML;
         });
         failures = 0;
