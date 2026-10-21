@@ -727,7 +727,7 @@ def validate_problem(problem, conn=None) -> dict:
     check("Judge data",len(inputs)>0 and len(inputs)==len(outputs),f"{len(inputs)} inputs / {len(outputs)} outputs")
     check("Samples",bool(problem["sample_input"].strip())==bool(problem["sample_output"].strip()),"Sample pair is complete." if bool(problem["sample_input"].strip())==bool(problem["sample_output"].strip()) else "Sample input/output pair is incomplete.")
     if problem["reference_solution"] and problem["reference_language"]:
-        result=core.judge_submission(language=problem["reference_language"],source=problem["reference_solution"],tests_dir=td,time_limit_ms=problem["time_limit_ms"],memory_limit_mb=problem["memory_limit_mb"])
+        result=core.judge_submission(language=problem["reference_language"],source=problem["reference_solution"],tests_dir=td,time_limit_ms=problem["time_limit_ms"],memory_limit_mb=problem["memory_limit_mb"],output_limit_mb=problem["output_limit_mb"])
         check("Reference solution",result.get("verdict")=="AC",f"{result.get('verdict')}: {result.get('detail','')[:300]}")
     else:
         check("Reference solution",True,"No reference solution configured (optional): the hidden tests are used as they are.")

@@ -129,7 +129,7 @@ def _docker_base(work: Path, memory_mb: int, name: str, pids: int = 64) -> list[
     ]
 
 
-def _run_container(cmd: list[str], name: str, stdin_text: str, timeout: float) -> tuple[int | None, str, str, bool, bool]:
+def _run_container(cmd: list[str], name: str, stdin_text: str, timeout: float, output_cap: int = OUTPUT_CAP_BYTES) -> tuple[int | None, str, str, bool, bool]:
     """Run a docker command, killing the container itself on timeout or output flood.
 
     Returns (returncode, stdout, stderr, timed_out, output_overflow).
@@ -152,7 +152,7 @@ def _run_container(cmd: list[str], name: str, stdin_text: str, timeout: float) -
         while True:
             chunk = stream.read1(65536) if hasattr(stream, "read1") else stream.read(65536)
             if not chunk: return
-            room = OUTPUT_CAP_BYTES - len(bufs[key])
+            room = output_cap - len(bufs[key])
             bufs[key].extend(chunk[:max(0, room)])
             # Keep draining (and discarding) so the docker client never blocks while we kill the container.
             if len(chunk) > room and not overflow.is_set():
@@ -181,7 +181,7 @@ def _container_name() -> str:
     return f"inquisitor-judge-{uuid.uuid4().hex[:12]}"
 
 
-def _judge_docker(*, language: str, source: str, tests_dir: Path, time_limit_ms: int, memory_limit_mb: int) -> dict:
+def _judge_docker(*, language: str, source: str, tests_dir: Path, time_limit_ms: int, memory_limit_mb: int, output_limit_mb: int = 8) -> dict:
     if shutil.which("docker") is None:
         return {"verdict": "JE", "runtime_ms": None, "detail": "Docker judge backend selected but docker CLI is unavailable."}
     inputs = sorted(tests_dir.glob("input*.txt"))
@@ -206,7 +206,10 @@ def _judge_docker(*, language: str, source: str, tests_dir: Path, time_limit_ms:
             name=_container_name()
             cmd=_docker_base(work,memory_limit_mb,name)+["bash","-lc",run_cmd]
             started=time.perf_counter()
-            rc,out,err,timed_out,overflow=_run_container(cmd,name,input_path.read_text(encoding="utf-8"),timeout+1.5)
+            expected_size=output_path.stat().st_size
+            # The output cap is the problem's own output limit, and never less than twice the expected answer (a correct program must fit).
+            cap=min(128*1024*1024,max(OUTPUT_CAP_BYTES,int(output_limit_mb)*1024*1024,2*expected_size+65536))
+            rc,out,err,timed_out,overflow=_run_container(cmd,name,input_path.read_text(encoding="utf-8"),timeout+1.5,cap)
             if timed_out:
                 return {"verdict":"TLE","runtime_ms":int(timeout*1000),"detail":f"Time limit exceeded on test {index}."}
             elapsed=(time.perf_counter()-started)*1000; max_runtime=max(max_runtime,elapsed)
@@ -245,11 +248,11 @@ def _judge_local(*, language: str, source: str, tests_dir: Path, time_limit_ms: 
     return {"verdict":"AC","runtime_ms":int(max_runtime),"detail":"All hidden tests passed."}
 
 
-def judge_submission(*, language: str, source: str, tests_dir: Path, time_limit_ms: int, memory_limit_mb: int = 256) -> dict:
+def judge_submission(*, language: str, source: str, tests_dir: Path, time_limit_ms: int, memory_limit_mb: int = 256, output_limit_mb: int = 8) -> dict:
     if language not in LANGUAGES:
         return {"verdict":"CE","runtime_ms":None,"detail":"Unsupported language."}
     if judge_backend()=="docker":
-        return _judge_docker(language=language,source=source,tests_dir=tests_dir,time_limit_ms=time_limit_ms,memory_limit_mb=memory_limit_mb)
+        return _judge_docker(language=language,source=source,tests_dir=tests_dir,time_limit_ms=time_limit_ms,memory_limit_mb=memory_limit_mb,output_limit_mb=output_limit_mb)
     if os.environ.get("INQUISITOR_PRODUCTION","0")=="1" and os.environ.get("INQUISITOR_ALLOW_UNSAFE_LOCAL_JUDGE","0")!="1":
         return {"verdict":"JE","runtime_ms":None,"detail":"Production mode requires INQUISITOR_JUDGE_BACKEND=docker. Unsafe local execution is disabled."}
     return _judge_local(language=language,source=source,tests_dir=tests_dir,time_limit_ms=time_limit_ms)

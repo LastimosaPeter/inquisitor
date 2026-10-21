@@ -3161,7 +3161,7 @@ def judging_worker():
         try:
             conn = db_connect()
             sub = conn.execute(
-                """SELECT s.*, p.api_id, p.time_limit_ms, p.memory_limit_mb FROM submissions s JOIN problems p ON p.id=s.problem_id
+                """SELECT s.*, p.api_id, p.time_limit_ms, p.memory_limit_mb, p.output_limit_mb FROM submissions s JOIN problems p ON p.id=s.problem_id
                    WHERE s.status='PENDING' ORDER BY s.id LIMIT 1"""
             ).fetchone()
             if not sub:
@@ -3172,7 +3172,7 @@ def judging_worker():
             if claimed.rowcount != 1: continue
             fresh=conn.execute("SELECT * FROM submissions WHERE id=?",(sub["id"],)).fetchone()
             if not fresh or fresh["status"]!="JUDGING": continue
-            result=judge_submission(language=sub["language"],source=sub["source"],tests_dir=PROBLEMS_DIR/sub["contest_id"]/sub["api_id"]/"tests",time_limit_ms=sub["time_limit_ms"],memory_limit_mb=sub["memory_limit_mb"])
+            result=judge_submission(language=sub["language"],source=sub["source"],tests_dir=PROBLEMS_DIR/sub["contest_id"]/sub["api_id"]/"tests",time_limit_ms=sub["time_limit_ms"],memory_limit_mb=sub["memory_limit_mb"],output_limit_mb=sub["output_limit_mb"])
             judged=iso(utcnow())
             # Only write the result if the submission is still ours: a rejudge request or a judge's manual
             # verdict that landed while this ran must not be overwritten by a stale auto result.
