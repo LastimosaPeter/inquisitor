@@ -332,3 +332,38 @@ body.presentation ::-webkit-scrollbar-corner{background:#0d1014}
 
 /* ---- Problem cards on the public page are information only ---- */
 .problem-card.static{cursor:default;pointer-events:none;user-select:text}
+
+
+/* ---- Phones: a compact header and a leaderboard that is easy to read and swipe ---- */
+.swipe-hint{display:none}
+@media (max-width:760px){
+  main{padding:14px 12px 28px}
+  .sidebar{padding:10px 12px 8px;overflow:visible}
+  .brand{padding:0 2px 8px}
+  .brand-wordmark{height:30px;width:auto}
+  .sidebar nav{display:flex;gap:4px;overflow-x:auto;padding-bottom:4px;scrollbar-width:none}
+  .sidebar nav::-webkit-scrollbar{display:none}
+  .sidebar nav a{flex:none;min-height:34px;padding:7px 11px;white-space:nowrap}
+  .nav-section,.side-footer,.partner-lockup,.side-platform-tagline,.sidebar>small{display:none}
+  .sidebar-toggle{display:none}
+  .topbar{flex-wrap:wrap;gap:10px;padding-bottom:12px}
+  .page-heading h1{font-size:1.35rem;line-height:1.2}
+  .top-actions{display:flex;flex-wrap:wrap;gap:8px;width:100%;align-items:center}
+  .top-actions .user-pill{min-width:0;flex:1 1 140px}
+  .contest-clock{margin-left:auto}
+  .scoreboard-card{padding:14px 12px}
+  .scoreboard-card .card-head{flex-wrap:wrap;gap:8px}
+  .scoreboard-card .card-head h2{font-size:1.05rem;line-height:1.25}
+  .swipe-hint{display:block;margin:2px 0 8px;font-size:11px;color:#7e8790}
+  .scoreboard-card .table-wrap{margin:0 -12px;padding:0 12px 6px;-webkit-overflow-scrolling:touch}
+  .scoreboard th,.scoreboard td{padding:8px 5px;font-size:12px}
+  .scoreboard th{font-size:9px;letter-spacing:.04em}
+  .scoreboard th:nth-child(3),.scoreboard td:nth-child(3),.scoreboard th:nth-child(4),.scoreboard td:nth-child(4){min-width:44px;text-align:center}
+  .scoreboard th:first-child,.scoreboard td:first-child{position:sticky;left:0;z-index:2;width:30px;min-width:30px;max-width:30px;padding-left:6px;padding-right:2px;background:var(--surface)}
+  .scoreboard th:nth-child(2),.scoreboard td:nth-child(2){position:sticky;left:30px;z-index:2;width:88px;min-width:88px;max-width:88px;padding-left:4px;background:var(--surface);box-shadow:6px 0 8px -6px rgba(0,0,0,.35)}
+  .scoreboard td:nth-child(2) strong{display:block;white-space:normal;overflow-wrap:anywhere;line-height:1.25;font-size:12px}
+  .scoreboard td:nth-child(2) small,.scoreboard td:nth-child(2) .department-chip{display:none}
+  .scoreboard .score-cell{min-width:46px;padding:5px 3px;font-size:12px}
+  .rank-medal{transform:scale(.85)}
+  .freeze-banner{flex-wrap:wrap;gap:8px;padding:12px}
+}
