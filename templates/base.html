@@ -10,6 +10,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon-32x32.png') }}">
   <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='favicon-16x16.png') }}">
   <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
+  <script>try{if(localStorage.getItem('inq-sidebar')==='collapsed')document.documentElement.classList.add('sidebar-collapsed')}catch(e){}</script>
   {% block head_extra %}{% endblock %}
 </head>
 <body class="{{ 'is-frozen' if cstate and cstate.phase=='FROZEN' else '' }}">
@@ -75,7 +76,7 @@
 
   <main>
     <header class="topbar">
-      <div class="page-heading"><h1>{% block page_title %}{{ contest['name'] if contest else 'Inquisitor' }}{% endblock %}</h1></div>
+      <div class="page-heading"><button class="ghost sidebar-toggle" id="sidebar-toggle" type="button" title="Show or hide the side menu" aria-label="Show or hide the side menu" aria-expanded="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><h1>{% block page_title %}{{ contest['name'] if contest else 'Inquisitor' }}{% endblock %}</h1></div>
       <div class="top-actions">
         <button class="ghost theme-toggle" id="theme-toggle" type="button" title="Switch between dark and light" aria-label="Switch between dark and light theme"><svg class="icon-sun" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><svg class="icon-moon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
         {% if contest and cstate %}<div class="contest-clock" title="Contest time remaining"><span class="phase {{ cstate.phase|lower|replace(' ','-') }}" id="contest-phase">{{ cstate.phase }}</span><strong id="countdown" class="js-countdown" data-end="{{ cstate.end.isoformat() if cstate.end else '' }}">--:--:--</strong></div>{% endif %}

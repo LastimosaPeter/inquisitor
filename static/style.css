@@ -296,3 +296,39 @@ main{padding-top:26px}.topbar{padding-bottom:18px;margin-bottom:24px}.topbar:aft
 .theme-toggle .icon-moon{display:none}
 html[data-theme="light"] .theme-toggle .icon-sun{display:none}
 html[data-theme="light"] .theme-toggle .icon-moon{display:inline}
+
+
+/* ---- Side menu that can be collapsed ---- */
+.page-heading{display:flex;align-items:center;gap:12px}
+.sidebar-toggle{display:inline-grid;place-items:center;flex:none;width:34px;height:34px;padding:0}
+html.sidebar-collapsed .shell{grid-template-columns:minmax(0,1fr)}
+html.sidebar-collapsed .sidebar{display:none}
+
+/* ---- Projector: dark scrollbars everywhere on the presentation pages, and the table scrolls by itself ---- */
+html:has(body.presentation){color-scheme:dark;scrollbar-color:#3a414c #0d1014}
+body.presentation{color-scheme:dark}
+body.presentation *{scrollbar-width:thin;scrollbar-color:#3a414c #0d1014}
+body.presentation ::-webkit-scrollbar{width:10px;height:10px;background:#0d1014}
+body.presentation ::-webkit-scrollbar-track{background:#0d1014}
+body.presentation ::-webkit-scrollbar-thumb{background:#3a414c;border-radius:6px;border:2px solid #0d1014}
+body.presentation ::-webkit-scrollbar-corner{background:#0d1014}
+.presentation-scroll.auto-scroll{scroll-behavior:auto}
+
+/* ---- Public contest page: clearer hierarchy and spacing ---- */
+.public-contest h2{font-size:1.5rem;line-height:1.2;margin:.2rem 0 1.1rem}
+.public-contest h3{font-size:.78rem;letter-spacing:.09em;text-transform:uppercase;color:#8b949e;margin:1.9rem 0 .75rem}
+.public-contest .public-contest-hero{gap:1.1rem;margin:1.1rem 0 1.25rem}
+.public-contest .public-contest-hero>div{padding:1.15rem 1.25rem}
+.public-contest .public-contest-hero strong{display:block;font-size:1.15rem;line-height:1.3;margin:.3rem 0 .15rem}
+.public-contest .public-contest-hero .hero-countdown{font-size:2.1rem;line-height:1.15;margin:.35rem 0 .25rem}
+.public-contest .public-contest-hero small{display:block;margin-top:.45rem;opacity:.78;line-height:1.4}
+.public-contest .info-grid{gap:.85rem}
+.public-contest .info-grid>div{padding:.95rem 1.1rem}
+.public-contest .info-grid span{display:block;margin-bottom:.4rem}
+.public-contest .separator{margin:1.6rem 0 .25rem}
+.public-contest .language-chips{display:flex;flex-wrap:wrap;gap:.55rem;margin:.2rem 0 .6rem}
+.public-contest .language-chips span{padding:.4rem .8rem}
+.public-contest p{line-height:1.65;margin:0 0 1rem}
+
+/* ---- Problem cards on the public page are information only ---- */
+.problem-card.static{cursor:default;pointer-events:none;user-select:text}

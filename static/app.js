@@ -113,3 +113,18 @@
     location.reload();
   });
 })();
+
+
+/* Side menu: collapse / expand, remembered in this browser. */
+(function () {
+  var button = document.getElementById('sidebar-toggle');
+  if (!button) return;
+  var root = document.documentElement;
+  function sync() { button.setAttribute('aria-expanded', root.classList.contains('sidebar-collapsed') ? 'false' : 'true'); }
+  sync();
+  button.addEventListener('click', function () {
+    var collapsed = root.classList.toggle('sidebar-collapsed');
+    try { localStorage.setItem('inq-sidebar', collapsed ? 'collapsed' : 'open'); } catch (e) {}
+    sync();
+  });
+})();
