@@ -6,7 +6,7 @@
   <section class="card">
     <div class="card-head">
       <div><span class="eyebrow">{{ sub['participant_name'] }}{% if sub['participant_affiliation'] %} · {{ sub['participant_affiliation'] }}{% endif %}</span>
-        <h2>Problem {{ sub['code'] }} · {{ sub['title'] }}</h2></div>
+        <h2>Problem {{ sub['code'] }} · {{ sub['title'] }}</h2><a class="text-link" href="{{ url_for('problem', code=sub['code']) }}" target="_blank" rel="noopener">Read the problem statement</a></div>
       <a class="tiny buttonlike" href="{{ url_for('judge_console') }}">Back to queue</a>
     </div>
     <p class="muted">{{ language.label if language else sub['language'] }} · submitted {{ sub['submitted_at'] }}

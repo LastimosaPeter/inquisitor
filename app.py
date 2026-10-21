@@ -650,6 +650,24 @@ def role_required(*roles):
 
 
 participant_required = role_required("participant")
+
+
+def problem_reader_required(fn):
+    """Problem statements: contestants, and staff who judge or manage problems (read only)."""
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        user = current_user()
+        if not user:
+            return redirect(url_for("login", next=request.path))
+        if user["role"] != "participant" and not (user["role"] in ("judge", "admin") and (fx.staff_can("judge") or fx.staff_can("problems"))):
+            abort(403)
+        return fn(*args, **kwargs)
+    return wrapper
+
+
+def viewer_is_staff() -> bool:
+    user = current_user()
+    return bool(user and user["role"] in ("judge", "admin"))
 judge_required = role_required("judge", "admin")
 admin_required = role_required("admin")
 
@@ -1528,9 +1546,13 @@ def problems_hidden_from_students(contest) -> bool:
 
 
 @app.route("/problems")
-@participant_required
+@problem_reader_required
 def problems():
     contest = active_contest()
+    staff = viewer_is_staff()
+    if staff:
+        rows = get_db().execute("SELECT * FROM problems WHERE contest_id=? ORDER BY ordinal,code", (contest["id"],)).fetchall()
+        return render_template("problems.html", problems=rows, staff_view=True)
     if problems_hidden_from_students(contest):
         flash("The problems appear here when the contest starts.", "info")
         return redirect(url_for("dashboard"))
@@ -1636,16 +1658,17 @@ def problem_image(code, name):
 
 
 @app.route("/problem/<code>")
-@participant_required
+@problem_reader_required
 def problem(code):
     contest = active_contest()
-    if problems_hidden_from_students(contest):
+    staff = viewer_is_staff()
+    if not staff and problems_hidden_from_students(contest):
         flash("The problems appear when the contest starts.", "info")
         return redirect(url_for("dashboard"))
-    p = get_db().execute("SELECT * FROM problems WHERE contest_id=? AND code=? AND enabled=1", (contest["id"], code.upper())).fetchone()
+    p = get_db().execute("SELECT * FROM problems WHERE contest_id=? AND code=?" + ("" if staff else " AND enabled=1"), (contest["id"], code.upper())).fetchone()
     if not p:
         abort(404)
-    return render_template("problem.html", p=p, image_names=list_problem_images(contest["id"], p["api_id"]))
+    return render_template("problem.html", p=p, image_names=list_problem_images(contest["id"], p["api_id"]), staff_view=staff)
 
 
 @app.route("/submit", methods=["GET", "POST"])
