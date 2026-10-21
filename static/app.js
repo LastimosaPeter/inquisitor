@@ -8,7 +8,7 @@
       }
     });
   }
-  const clocks=[...document.querySelectorAll('.js-countdown')];
+  const getClocks=()=>[...document.querySelectorAll('.js-countdown')];
   // Every clock follows the server's time, not this computer's, so everyone sees the same countdown.
   var clockOffset=0;
   (function(){
@@ -28,7 +28,7 @@
 
   function tick(){
     let primarySeconds=null;
-    clocks.forEach((el,index)=>{
+    getClocks().forEach((el,index)=>{
       const raw=el.dataset.end;
       if(!raw){ el.textContent='--:--:--'; return; }
       const end=new Date(raw);
@@ -43,7 +43,7 @@
     }
   }
 
-  if(clocks.length){
+  if(getClocks().length){
     tick();
     setInterval(tick,1000);
   }
@@ -134,4 +134,31 @@
     try { localStorage.setItem('inq-sidebar', collapsed ? 'collapsed' : 'open'); } catch (e) {}
     sync();
   });
+})();
+
+
+/* Live leaderboard: the standings refresh by themselves every 15 seconds, without reloading the page. */
+(function () {
+  var regions = document.querySelectorAll('[data-live-region]');
+  if (!regions.length || !window.fetch || !window.DOMParser) return;
+  var busy = false, failures = 0;
+  function refresh() {
+    if (busy || document.hidden) return;
+    busy = true;
+    fetch(location.href, { credentials: 'same-origin', cache: 'no-store', headers: { 'X-Requested-With': 'live-board' } })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+      .then(function (html) {
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        document.querySelectorAll('[data-live-region]').forEach(function (cur) {
+          var fresh = doc.querySelector('[data-live-region="' + cur.getAttribute('data-live-region') + '"]');
+          if (fresh && fresh.innerHTML !== cur.innerHTML) cur.innerHTML = fresh.innerHTML;
+        });
+        failures = 0;
+      })
+      .catch(function () { failures++; })
+      .then(function () { busy = false; });
+  }
+  // every 15 s while the tab is open; slower after repeated failures so a struggling server is not hammered
+  (function loop() { setTimeout(function () { refresh(); loop(); }, failures > 2 ? 45000 : 15000); })();
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) refresh(); });
 })();
