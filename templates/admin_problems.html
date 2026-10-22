@@ -1,6 +1,7 @@
 {% extends 'base.html' %}
 {% block title %}Problems{% endblock %}
 {% block page_title %}Problems{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="{{ url_for('static', filename='katex/katex.min.css') }}">{% endblock %}
 {% block content %}
 <div class="grid one-two">
 <section class="stack">
@@ -45,11 +46,16 @@
           <label>Title<input name="title" value="{{ p['title'] }}"></label><label>Author / Contributor(s)<input name="contributors" value="{{ p['contributors'] }}"></label>
           <div class="form-row"><label>Points<input type="number" step="0.01" name="points" value="{{ p['points'] }}"></label><label>Color<div class="color-field"><input type="color" name="color" value="{{ p['color'] }}"><span>{{ p['color'] }}</span></div></label></div>
           <label>Tags<input name="tags" value="{{ p['tags'] }}"></label><label>Source<input name="source" value="{{ p['source'] }}"></label>
-          <label>Statement<textarea class="statement-editor" name="statement">{{ p['statement'] }}</textarea></label><div class="form-row"><label>Sample input<textarea name="sample_input" rows="5">{{ p['sample_input'] }}</textarea></label><label>Sample output<textarea name="sample_output" rows="5">{{ p['sample_output'] }}</textarea></label></div>
+          <label>Statement<textarea class="statement-editor" name="statement" data-image-base="/problem/{{ p['code']|urlencode }}/image/" data-image-names="{{ problem_images.get(p['id'], [])|join(',') }}">{{ p['statement'] }}</textarea></label><div class="form-row"><label>Sample input<textarea name="sample_input" rows="5">{{ p['sample_input'] }}</textarea></label><label>Sample output<textarea name="sample_output" rows="5">{{ p['sample_output'] }}</textarea></label></div>
           <div class="form-row three"><label>Time (ms)<input type="number" name="time_limit_ms" value="{{ p['time_limit_ms'] }}"></label><label>Memory (MB)<input type="number" name="memory_limit_mb" value="{{ p['memory_limit_mb'] }}"></label><label>Order<input type="number" name="ordinal" value="{{ p['ordinal'] }}"></label></div>
           <label>Replace hidden tests<input type="file" name="tests_zip" accept=".zip"></label><label>Reference language<select name="reference_language"><option value="">None</option>{% for key,lang in languages.items() %}<option value="{{ key }}" {{ 'selected' if p['reference_language']==key else '' }}>{{ lang.label }}</option>{% endfor %}</select></label><label>Reference solution<textarea class="code-editor compact-code" name="reference_solution" rows="9">{{ p['reference_solution'] }}</textarea></label><label>Input validator<textarea class="code-editor compact-code" name="validator_source" rows="6">{{ p['validator_source'] }}</textarea></label><label>Internal notes<textarea name="internal_notes" rows="3">{{ p['internal_notes'] }}</textarea></label>
           <label class="checkline"><input type="checkbox" name="enabled" {{ 'checked' if p['enabled'] else '' }}> Published</label><button class="button secondary" type="submit">Save problem</button>
         </form>
+        <div class="problem-images"><span class="eyebrow">Pictures for the statement</span>
+          <p class="muted">PNG, JPEG, GIF or WebP, up to 2 MB each. Put one in the statement with <code>![describe the picture](filename.png)</code>.</p>
+          <form method="post" action="{{ url_for('admin_upload_problem_images', pid=p['id']) }}" enctype="multipart/form-data" class="inline-team-form"><input type="file" name="images" accept="image/png,image/jpeg,image/gif,image/webp" multiple required><button class="tiny" type="submit">Upload</button></form>
+          {% for name in problem_images.get(p['id'], []) %}<div class="image-row"><img src="/problem/{{ p['code']|urlencode }}/image/{{ name|urlencode }}" alt="" loading="lazy"><code>![]({{ name }})</code><form method="post" action="{{ url_for('admin_delete_problem_image', pid=p['id'], name=name) }}" onsubmit="return confirm('Delete {{ name }}?')"><button class="tiny danger-inline" type="submit">Delete</button></form></div>{% endfor %}
+        </div>
       </details>
       <form method="post" action="{{ url_for('admin_delete_problem', pid=p['id']) }}" onsubmit="return confirm('Delete problem {{ p['code'] }}?')"><button class="tiny danger-inline" type="submit">Delete</button></form>
     </article>
@@ -58,3 +64,18 @@
 </section>
 </div>
 {% endblock %}
+{% block scripts %}{% include '_math_scripts.html' %}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('textarea.statement-editor').forEach(function (ta) {
+    var box = document.createElement('div'); box.className = 'math-preview';
+    box.innerHTML = '<small class="muted">Preview. **bold**, *italic*, "- " bullets and "1. " numbers, `code`, ![picture](file.png) after uploading it below, math in LaTeX: $x^2$ inline, $$\\sum_{i=1}^{n} a_i$$ on its own line, \\$ for a dollar sign.</small><div class="statement"><div class="md-preview"></div></div>';
+    ta.closest('label').insertAdjacentElement('afterend', box);
+    var out = box.querySelector('.md-preview'), timer = null;
+    out.dataset.imageBase = ta.dataset.imageBase || ''; out.dataset.imageNames = ta.dataset.imageNames || '';
+    function update() { window.renderMarkdownStatement(out, ta.value || ' '); }
+    ta.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(update, 250); });
+    update();
+  });
+});
+</script>{% endblock %}

@@ -1,0 +1,14 @@
+{% extends 'base.html' %}{% block title %}Compare submissions{% endblock %}{% block page_title %}Compare submissions{% endblock %}{% block content %}
+<section class="card">
+  <div class="card-head"><div><span class="eyebrow">Problem {{ left['code'] }} · {{ left['title'] }}</span><h2>{{ '%.1f'|format(score*100) }}% similar</h2></div>
+    <div class="row-actions">
+      <form method="post" action="{{ url_for('v1.similarity_review') }}"><input type="hidden" name="action" value="flag"><input type="hidden" name="a" value="{{ left['id'] }}"><input type="hidden" name="b" value="{{ right['id'] }}"><input type="hidden" name="score" value="{{ score }}"><button class="button">Flag this pair for review</button></form>
+      <a class="tiny buttonlike" href="javascript:history.back()">Back</a></div></div>
+  <p class="muted">Highlighted lines differ between the two submissions. The percentage is computed on the code with comments, spacing and letter case ignored.</p>
+  <div class="table-wrap"><table class="compare-table"><thead><tr>
+    <th>#{{ left['id'] }} · {{ left['display_name'] }} · {{ left['language'] }}</th>
+    <th>#{{ right['id'] }} · {{ right['display_name'] }} · {{ right['language'] }}</th></tr></thead><tbody>
+  {% for l,r,cls in rows %}<tr class="{{ cls }}"><td><pre>{{ l if l is not none else '' }}</pre></td><td><pre>{{ r if r is not none else '' }}</pre></td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}

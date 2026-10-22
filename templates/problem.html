@@ -1,6 +1,7 @@
 {% extends 'base.html' %}
 {% block title %}{{ p['code'] }} · {{ p['title'] }}{% endblock %}
 {% block page_title %}{{ p['code'] }} · {{ p['title'] }}{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="{{ url_for('static', filename='katex/katex.min.css') }}">{% endblock %}
 {% block content %}
 <div class="grid two-one">
   <section class="card statement problem-statement-accent" style="--problem-color: {{ p['color'] }}">
@@ -9,11 +10,12 @@
       {% set contributor_count = p['contributors'].split(';')|length %}
       <p class="problem-byline"><span>{{ 'Contributors' if contributor_count > 1 else 'Author / Contributor' }}</span> {{ p['contributors'] }}</p>
     {% endif %}
-    <p>{{ p['statement'] }}</p>
+    <div class="md-source" data-image-base="/problem/{{ p['code']|urlencode }}/image/" data-image-names="{{ image_names|join(',') }}">{{ p['statement'] }}</div>
     {% if p['sample_input'] or p['sample_output'] %}
       <div class="grid two-one"><div><span class="eyebrow">Sample input</span><pre>{{ p['sample_input'] }}</pre></div><div><span class="eyebrow">Sample output</span><pre>{{ p['sample_output'] }}</pre></div></div>
     {% endif %}
   </section>
-  <aside class="card sticky-card"><span class="eyebrow">Submit</span><h2>Problem {{ p['code'] }}</h2><p class="muted">Accepted languages: Rust, Ruby, Java, Kotlin, Python 3, C, and C++.</p><a class="button wide" href="{{ url_for('submit', problem=p['code']) }}">Submit solution</a></aside>
+  {% if staff_view %}<aside class="card sticky-card"><span class="eyebrow">Staff view</span><h2>Problem {{ p['code'] }}</h2><p class="muted">You are reading this as staff. It is read only; contestants see the same statement once the contest starts.{% if not p['enabled'] %} <strong>This problem is hidden from contestants.</strong>{% endif %}</p><a class="button wide" href="{{ url_for('problems') }}">All problems</a></aside>{% else %}<aside class="card sticky-card"><span class="eyebrow">Submit</span><h2>Problem {{ p['code'] }}</h2><p class="muted">Accepted languages: Rust, Ruby, Java, Kotlin, Python 3, C, and C++.</p><a class="button wide" href="{{ url_for('submit', problem=p['code']) }}">Submit solution</a></aside>{% endif %}
 </div>
 {% endblock %}
+{% block scripts %}{% include '_math_scripts.html' %}{% endblock %}

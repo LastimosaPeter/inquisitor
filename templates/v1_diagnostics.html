@@ -1,0 +1,14 @@
+{% extends 'base.html' %}{% block title %}Diagnostics{% endblock %}{% block page_title %}Diagnostics{% endblock %}{% block content %}
+<section class="card" data-live-region="diag">
+  <div class="card-head"><div><span class="eyebrow">What the app is doing right now</span><h2>{{ report.generated }}</h2></div><div class="row-actions">{% if deep %}<a class="tiny buttonlike" href="{{ url_for('v1.diagnostics_page') }}">Back to the short view</a>{% else %}<a class="tiny buttonlike" href="{{ url_for('v1.diagnostics_page', deep=1) }}">Deep dive</a>{% endif %}<button class="tiny" type="button" id="copy-report">Copy report</button><a class="tiny buttonlike" href="{{ url_for('v1.diagnostics_text', deep=1 if deep else None) }}">Plain text</a></div></div>
+  {% if report.attention %}<div class="notice danger-notice"><strong>Needs attention</strong><ul>{% for a in report.attention %}<li>{{ a }}</li>{% endfor %}</ul></div>{% else %}<div class="notice"><strong>Nothing needs attention.</strong> The judge is running and no problems were found.</div>{% endif %}
+  {% for title, lines in report.sections %}<h3 style="margin:18px 0 6px">{{ title }}</h3><pre class="code-view" style="white-space:pre-wrap">{{ lines|join('\n') }}</pre>{% endfor %}
+  <textarea id="report-text" hidden>{{ report_text }}</textarea>
+  <p class="muted">This page refreshes by itself every 15 seconds. "Copy report" puts everything above on your clipboard so you can paste it into a chat to ask what is going on. It holds no passwords or personal data beyond usernames.</p>
+</section>
+{% endblock %}
+{% block scripts %}<script>
+document.addEventListener('click',function(e){var b=e.target.closest('#copy-report');if(!b)return;var t=document.getElementById('report-text');var text=t?t.value:'';
+ function done(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy report'},1500)}
+ if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done,function(){t.hidden=false;t.select();document.execCommand('copy');t.hidden=true;done()})}else{t.hidden=false;t.select();document.execCommand('copy');t.hidden=true;done()}});
+</script>{% endblock %}

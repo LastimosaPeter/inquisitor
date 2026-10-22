@@ -26,12 +26,20 @@
     <label>Allowed colleges <textarea name="allowed_colleges" rows="2"></textarea></label>
     <label>Allowed departments / programs <textarea name="allowed_departments" rows="2"></textarea></label>
     <label>Allowed year levels <textarea name="allowed_year_levels" rows="2" placeholder="1st Year, 2nd Year, 3rd Year, 4th Year"></textarea></label>
+    <label>Allowed contestants (ADNU emails) <small class="muted">Optional. One per line (commas also work). Blank means any ADNU account can register; otherwise only these emails can.</small><textarea name="allowed_emails" rows="3" placeholder="student@gbox.adnu.edu.ph"></textarea></label>
+    <div class="separator"></div><span class="eyebrow">Staff for this contest</span>
+    <p class="muted" style="margin:0">Optional. Type ADNU emails, one per line (commas or semicolons also work). They sign in with Google and get the pages their role uses. Everyone else who signs in is a contestant.</p>
+    <label>Chief judges <textarea name="staff_chief_judges" rows="2" placeholder="name@adnu.edu.ph"></textarea></label>
+    <label>Judges <textarea name="staff_judges" rows="3" placeholder="name@adnu.edu.ph&#10;another@gbox.adnu.edu.ph"></textarea></label>
+    <label>Problem setters <textarea name="staff_problem_setters" rows="2" placeholder="name@adnu.edu.ph"></textarea></label>
+    <label>Registration staff <textarea name="staff_registration" rows="2" placeholder="name@adnu.edu.ph"></textarea></label>
     <label>Organizers / hosts<input name="organizer_text" value="TACTICS x Department of Computer Science, Ateneo de Naga University"></label><label>Contest rules<textarea name="rules_text" rows="4" placeholder="General contest rules, conduct, permitted materials, and special provisions."></textarea></label><label>Registration instructions<textarea name="registration_instruction" rows="2" placeholder="Check-in requirements, IDs to bring, etc."></textarea></label>
     <label>Maximum team size<input type="number" name="max_team_size" value="3" min="1" max="20"></label>
     <label>Custom scoring note<textarea name="custom_scoring_note" rows="2" placeholder="Used only when Custom points is selected."></textarea></label>
     <label class="checkline"><input type="checkbox" name="requires_approval"> Require staff approval for self-registration</label>
     <label class="checkline"><input type="checkbox" name="require_checkin"> Require on-site check-in before submissions</label>
     <label class="checkline"><input type="checkbox" name="signup_open" checked> Allow contestant self-registration</label>
+    <label class="checkline"><input type="checkbox" name="open_entry"> Open entry: also let non-Ateneo participants register with any Google account <small class="muted">(use approval or a contestant list to control who gets in)</small></label>
     <label class="checkline"><input type="checkbox" name="submissions_open" checked> Allow submissions when contest phase permits</label>
     <label class="checkline"><input type="checkbox" name="projector_autoscroll"> Enable auto-scroll loop for projector leaderboard</label>
     <label class="checkline"><input type="checkbox" name="make_active" checked> Make this the active contest</label>
@@ -67,11 +75,13 @@
           <label>Allowed colleges<textarea name="allowed_colleges" rows="2">{{ c['allowed_colleges'] }}</textarea></label>
           <label>Allowed departments / programs<textarea name="allowed_departments" rows="2">{{ c['allowed_departments'] }}</textarea></label>
           <label>Allowed year levels<textarea name="allowed_year_levels" rows="2">{{ c['allowed_year_levels'] }}</textarea></label>
+          <label>Allowed contestants (ADNU emails) <small class="muted">Optional. One per line. Blank means any ADNU account can register.</small><textarea name="allowed_emails" rows="3">{{ c['allowed_emails'] }}</textarea></label>
           <label>Organizers / hosts<input name="organizer_text" value="{{ c['organizer_text'] }}"></label><label>Contest rules<textarea name="rules_text" rows="4">{{ c['rules_text'] }}</textarea></label><label>Registration instructions<textarea name="registration_instruction" rows="2">{{ c['registration_instruction'] }}</textarea></label>
           <label>Custom scoring note<textarea name="custom_scoring_note" rows="2">{{ c['custom_scoring_note'] }}</textarea></label>
           <label class="checkline"><input type="checkbox" name="requires_approval" {{ 'checked' if c['requires_approval'] else '' }}> Require registration approval</label>
           <label class="checkline"><input type="checkbox" name="require_checkin" {{ 'checked' if c['require_checkin'] else '' }}> Require on-site check-in before submissions</label>
           <label class="checkline"><input type="checkbox" name="signup_open" {{ 'checked' if c['signup_open'] else '' }}> Allow self-registration</label>
+          <label class="checkline"><input type="checkbox" name="open_entry" {{ 'checked' if c['open_entry'] }}> Open entry: also let non-Ateneo participants register with any Google account</label>
           <label class="checkline"><input type="checkbox" name="submissions_open" {{ 'checked' if c['submissions_open'] else '' }}> Allow submissions</label>
           <label class="checkline"><input type="checkbox" name="projector_autoscroll" {{ 'checked' if c['projector_autoscroll'] else '' }}> Enable auto-scroll loop for projector leaderboard</label>
           <button class="button secondary" type="submit">Save configuration</button>

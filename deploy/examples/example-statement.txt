@@ -1,0 +1,16 @@
+**Signal Sum**
+
+Read $n$ integers $a_1, a_2, \ldots, a_n$ and print their sum $S = \sum_{i=1}^{n} a_i$.
+
+**Input**
+
+- The first line contains $n$ ($1 \le n \le 10^5$).
+- The second line contains $n$ integers, each with $|a_i| \le 10^9$.
+
+**Output**
+
+Print the sum on one line. It may not fit in 32 bits, so use a 64-bit integer.
+
+A note about money: a ticket costs \$5 (a plain dollar sign is written \$).
+
+![An example diagram](diagram.png)

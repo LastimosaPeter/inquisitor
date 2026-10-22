@@ -10,3 +10,4 @@ backups/
 judge-work/
 *.db-shm
 *.db-wal
+BUILD_INFO

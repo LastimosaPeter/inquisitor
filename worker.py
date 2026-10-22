@@ -26,9 +26,11 @@ def wait_for_database():
 
 def main():
     wait_for_database()
+    import telemetry
+    telemetry.start(app, "worker")
     app.start_worker()
     fx.start_maintenance_worker()
-    print("Inquisitor worker online", flush=True)
+    print(f"Inquisitor worker online ({app.judge_worker_count()} judge thread(s))", flush=True)
     while True:
         time.sleep(3600)
 

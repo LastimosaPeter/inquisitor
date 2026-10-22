@@ -19,7 +19,7 @@
     <div class="table-wrap"><table><thead><tr><th>#</th><th>Title</th><th>Status</th><th>Attempts</th></tr></thead><tbody>
     {% for p in problems %}{% set cell=mine.cells[p['api_id']] if mine else None %}
       <tr><td><span class="problem-letter" style="--problem-color: {{ p['color'] }}">{{ p['code'] }}</span></td><td><a class="row-link" href="{{ url_for('problem', code=p['code']) }}">{{ p['title'] }}</a></td><td>{% if cell and cell.status=='AC' %}<span class="badge ok">Accepted</span>{% elif cell and cell.status=='WA' %}<span class="badge bad">Attempted</span>{% else %}<span class="badge neutral">Unsolved</span>{% endif %}</td><td>{{ (cell.wrong + 1) if cell and cell.status=='AC' else (cell.wrong if cell else 0) }}</td></tr>
-    {% else %}<tr><td colspan="4" class="empty">No problems published yet.</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="4" class="empty">{{ "The problems appear here when the contest starts." if problems_hidden else "No problems published yet." }}</td></tr>{% endfor %}
     </tbody></table></div>
   </section>
   <aside class="card quick-action"><span class="eyebrow">Submit</span><h2>Ready to send a solution?</h2><p class="muted">Upload a source file or paste code for automatic judging.</p><a class="button wide" href="{{ url_for('submit') }}">Submit solution</a><div class="language-chips"><span>C++</span><span>C</span><span>Java</span><span>Kotlin</span><span>Python 3</span><span>Rust</span><span>Ruby</span></div></aside>

@@ -227,3 +227,173 @@ main{padding-top:26px}.topbar{padding-bottom:18px;margin-bottom:24px}.topbar:aft
 /* v1.0.7 simple sidebar platform tagline */
 .side-platform-tagline{display:block!important;white-space:normal!important;color:#929ca5;font-size:9px!important;line-height:1.45!important;letter-spacing:0!important;margin-top:2px;max-width:240px;text-indent:0!important;padding-left:0!important}
 .side-platform-tagline strong,.side-platform-tagline span{display:inline!important;margin:0!important;padding:0!important;color:inherit!important;font:inherit!important}
+
+
+/* v1.0.9 small-screen refinement: keep wide tables inside the viewport and
+   shrink the sidebar to a compact header (later rules had re-enabled the footer). */
+@media(max-width:760px){
+  html,body{overflow-x:hidden}
+  main,.card,.table-wrap{min-width:0;max-width:100%}
+  .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .sidebar .side-footer{display:none}
+  .brand{min-height:0;padding:6px 8px 8px}
+  .brand-mark-img{display:block;height:34px}
+  .scoreboard td.score-identity{min-width:150px}
+}
+
+/* v1.0.9 code review view */
+.code-view{margin:12px 0 0;padding:14px 16px;background:var(--bg);border:1px solid var(--line);border-radius:var(--radius);font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text);overflow:auto;max-height:68vh;white-space:pre;tab-size:4}
+.compare-table td{vertical-align:top;width:50%;padding:0 10px}
+.compare-table pre{margin:0;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
+.compare-table tr.diff td{background:rgba(217,180,95,.12)}
+
+/* v1.0.9 sign-in with Google (ADNU) */
+.signin-card{max-width:440px}
+.signin-card-wide{max-width:560px}
+.signin-block{display:grid;gap:12px;margin-top:4px}
+.signin-title{margin:0;font-size:20px;line-height:1.25;color:var(--text-strong)}
+.google-btn{display:flex;align-items:center;justify-content:center;gap:12px;width:100%;padding:12px 16px;border-radius:8px;border:1px solid #dadce0;background:#fff;color:#1f1f1f;font-weight:600;font-size:14px;transition:background .14s ease,box-shadow .14s ease}
+.google-btn:hover{background:#f3f5f7;box-shadow:0 1px 8px rgba(0,0,0,.35)}
+.google-btn:focus-visible{outline:2px solid #8ab4f8;outline-offset:2px}
+.google-btn svg{width:20px;height:20px;flex:none}
+.auth-help{margin:0;color:var(--muted);font-size:12px;line-height:1.55;text-align:center}
+.auth-help strong{color:var(--text)}
+.auth-divider{display:flex;align-items:center;gap:12px;margin:22px 0 12px;color:var(--faint);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase}
+.auth-divider::before,.auth-divider::after{content:"";flex:1;height:1px;background:var(--line-soft)}
+.staff-signin>summary{cursor:pointer;color:var(--muted);font-size:12.5px;padding:6px 2px;list-style:none}
+.staff-signin>summary::-webkit-details-marker{display:none}
+.staff-signin>summary::before{content:"\25B8";display:inline-block;margin-right:8px;transition:transform .14s ease}
+.staff-signin[open]>summary::before{transform:rotate(90deg)}
+.staff-signin>summary:hover{color:var(--text)}
+.staff-signin .form-stack{margin-top:10px}
+.identity-chip{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:999px;background:#13171a;width:fit-content;max-width:100%}
+.identity-avatar{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:#2f3b46;color:#fff;font-size:12px;font-weight:700}
+.identity-email{font-size:12.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.identity-chip a{font-size:12px;color:var(--muted);text-decoration:underline;margin-left:4px}
+.signin-card .form-stack{margin-top:18px}
+.signin-card .form-stack+.auth-help{margin-top:14px}
+.signin-card label small{display:inline;margin-left:4px;font-weight:400}
+
+/* math in statements */
+.math-preview{display:grid;gap:6px;margin-top:2px}.math-preview .statement{border:1px dashed var(--line);border-radius:7px;padding:8px 12px;min-height:2.2em}
+.statement .katex{font-size:1.08em}.statement .katex-display{margin:.8em 0;overflow-x:auto;overflow-y:hidden}
+.statement .katex-error{color:#ef6b70}
+
+/* Markdown + pictures in statements */
+.md-source{white-space:pre-line;line-height:1.72}.md-rendered{white-space:normal}
+.md-rendered p{margin:0 0 .8em;white-space:normal}.md-rendered ul,.md-rendered ol{margin:.2em 0 .9em;padding-left:1.5em;line-height:1.7}
+.md-rendered li{margin:.15em 0}.md-rendered strong{color:var(--text-strong)}
+.md-rendered code{padding:1px 5px;border:1px solid var(--line-soft);border-radius:4px;background:#0d1113;font:12.5px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.md-rendered pre code{padding:0;border:0;background:none}
+.statement-img{display:block;max-width:100%;height:auto;margin:.7em 0;border-radius:7px;border:1px solid var(--line-soft)}
+.md-missing{color:var(--red);font-size:12px}
+.problem-images{display:grid;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line-soft)}
+.image-row{display:flex;align-items:center;gap:10px}.image-row img{width:56px;height:40px;object-fit:cover;border-radius:5px;border:1px solid var(--line-soft)}
+.image-row code{flex:1;font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
+
+/* theme toggle: show the icon of the theme you would switch to */
+.theme-toggle{display:inline-grid;place-items:center;width:34px;height:34px;padding:0;margin-right:6px}
+.theme-toggle .icon-moon{display:none}
+html[data-theme="light"] .theme-toggle .icon-sun{display:none}
+html[data-theme="light"] .theme-toggle .icon-moon{display:inline}
+
+
+/* ---- Side menu that can be collapsed ---- */
+.page-heading{display:flex;align-items:center;gap:12px}
+.sidebar-toggle{display:inline-grid;place-items:center;flex:none;width:34px;height:34px;padding:0}
+html.sidebar-collapsed .shell{grid-template-columns:minmax(0,1fr)}
+html.sidebar-collapsed .sidebar{display:none}
+
+/* ---- Projector: dark scrollbars everywhere on the presentation pages, and the table scrolls by itself ---- */
+html:has(body.presentation){color-scheme:dark;scrollbar-color:#3a414c #0d1014}
+body.presentation{color-scheme:dark}
+body.presentation *{scrollbar-width:thin;scrollbar-color:#3a414c #0d1014}
+body.presentation ::-webkit-scrollbar{width:10px;height:10px;background:#0d1014}
+body.presentation ::-webkit-scrollbar-track{background:#0d1014}
+body.presentation ::-webkit-scrollbar-thumb{background:#3a414c;border-radius:6px;border:2px solid #0d1014}
+body.presentation ::-webkit-scrollbar-corner{background:#0d1014}
+.presentation-scroll.auto-scroll{scroll-behavior:auto}
+
+/* ---- Public contest page: clearer hierarchy and spacing ---- */
+.public-contest h2{font-size:1.5rem;line-height:1.2;margin:.2rem 0 1.1rem}
+.public-contest h3{font-size:.78rem;letter-spacing:.09em;text-transform:uppercase;color:#8b949e;margin:1.9rem 0 .75rem}
+.public-contest .public-contest-hero{gap:1.1rem;margin:1.1rem 0 1.25rem}
+.public-contest .public-contest-hero>div{padding:1.15rem 1.25rem}
+.public-contest .public-contest-hero strong{display:block;font-size:1.15rem;line-height:1.3;margin:.3rem 0 .15rem}
+.public-contest .public-contest-hero .hero-countdown{font-size:2.1rem;line-height:1.15;margin:.35rem 0 .25rem}
+.public-contest .public-contest-hero small{display:block;margin-top:.45rem;opacity:.78;line-height:1.4}
+.public-contest .info-grid{gap:.85rem}
+.public-contest .info-grid>div{padding:.95rem 1.1rem}
+.public-contest .info-grid span{display:block;margin-bottom:.4rem}
+.public-contest .separator{margin:1.6rem 0 .25rem}
+.public-contest .language-chips{display:flex;flex-wrap:wrap;gap:.55rem;margin:.2rem 0 .6rem}
+.public-contest .language-chips span{padding:.4rem .8rem}
+.public-contest p{line-height:1.65;margin:0 0 1rem}
+
+/* ---- Problem cards on the public page are information only ---- */
+.problem-card.static{cursor:default;pointer-events:none;user-select:text}
+
+/* Projector: the auto-scroll switch sits quietly in the corner, per screen */
+.autoscroll-toggle{position:fixed;right:14px;bottom:12px;z-index:5;padding:6px 10px;border:1px solid #2d3339;border-radius:8px;background:#11151b;color:#8b949e;font:600 11px/1 inherit;letter-spacing:.03em;opacity:.45;cursor:pointer}
+.autoscroll-toggle:hover,.autoscroll-toggle:focus-visible,.autoscroll-toggle[aria-pressed="true"]{opacity:1;color:#d7dde4}
+
+/* ---- Phones: a compact header and a leaderboard that is easy to read and swipe ---- */
+.swipe-hint{display:none}
+@media (max-width:760px){
+  main{padding:14px 12px 28px}
+  .sidebar{padding:10px 12px 8px;overflow:visible}
+  .brand{padding:0 2px 8px}
+  .brand-wordmark{height:30px;width:auto}
+  .sidebar nav{display:flex;gap:4px;overflow-x:auto;padding-bottom:4px;scrollbar-width:none}
+  .sidebar nav::-webkit-scrollbar{display:none}
+  .sidebar nav a{flex:none;min-height:34px;padding:7px 11px;white-space:nowrap}
+  .nav-section,.side-footer,.partner-lockup,.side-platform-tagline,.sidebar>small{display:none}
+  .sidebar-toggle{display:none}
+  .topbar{flex-wrap:wrap;gap:10px;padding-bottom:12px}
+  .page-heading h1{font-size:1.35rem;line-height:1.2}
+  .top-actions{display:flex;flex-wrap:wrap;gap:8px;width:100%;align-items:center}
+  .top-actions .user-pill{min-width:0;flex:1 1 140px}
+  .contest-clock{margin-left:auto}
+  .scoreboard-card{padding:14px 12px}
+  .scoreboard-card .card-head{flex-wrap:wrap;gap:8px}
+  .scoreboard-card .card-head h2{font-size:1.05rem;line-height:1.25}
+  .swipe-hint{display:block;margin:2px 0 8px;font-size:11px;color:#7e8790}
+  .scoreboard-card .table-wrap{margin:0 -12px;padding:0 12px 6px;-webkit-overflow-scrolling:touch}
+  .scoreboard th,.scoreboard td{padding:8px 5px;font-size:12px}
+  .scoreboard th{font-size:9px;letter-spacing:.04em}
+  .scoreboard th:nth-child(3),.scoreboard td:nth-child(3),.scoreboard th:nth-child(4),.scoreboard td:nth-child(4){min-width:44px;text-align:center}
+  .scoreboard th:first-child,.scoreboard td:first-child{position:sticky;left:0;z-index:2;width:30px;min-width:30px;max-width:30px;padding-left:6px;padding-right:2px;background:var(--surface)}
+  .scoreboard th:nth-child(2),.scoreboard td:nth-child(2){position:sticky;left:30px;z-index:2;width:88px;min-width:88px;max-width:88px;padding-left:4px;background:var(--surface);box-shadow:6px 0 8px -6px rgba(0,0,0,.35)}
+  .scoreboard td:nth-child(2) strong{display:block;white-space:normal;overflow-wrap:anywhere;line-height:1.25;font-size:12px}
+  .scoreboard td:nth-child(2) small,.scoreboard td:nth-child(2) .department-chip{display:none}
+  .scoreboard .score-cell{min-width:46px;padding:5px 3px;font-size:12px}
+  .rank-medal{transform:scale(.85)}
+  .freeze-banner{flex-wrap:wrap;gap:8px;padding:12px}
+}
+
+/* Judge feedback shown to the contestant */
+.judge-feedback{margin-top:8px;padding:8px 10px;border-left:3px solid #4f86d6;border-radius:6px;background:rgba(79,134,214,.1);font-size:12.5px;line-height:1.5;white-space:pre-wrap}
+
+/* Contestants page: bulk bar and row checkboxes */
+.bulk-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:4px 0 12px}
+.select-box{display:inline-flex;align-items:center;margin-right:8px;vertical-align:middle}
+.select-box input{width:16px;height:16px}
+
+
+/* Notices: toasts and the unread badge */
+.notice-toasts{position:fixed;top:76px;right:18px;z-index:60;display:grid;gap:10px;width:min(360px,calc(100vw - 36px));pointer-events:none}
+.notice-toast{pointer-events:auto;padding:12px 14px;border:1px solid var(--line);border-left:4px solid #4f86d6;border-radius:10px;background:var(--surface,#15181b);box-shadow:0 10px 30px rgba(0,0,0,.35);animation:notice-in .25s ease-out}
+.notice-toast.warning{border-left-color:#d6a24f}
+.notice-toast.critical,.notice-toast.danger{border-left-color:#d65a4f}
+.notice-toast.leaving{opacity:0;transform:translateX(12px);transition:all .2s}
+.notice-toast-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.notice-toast-label{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:#7e8790;font-weight:650}
+.notice-toast-x{border:0;background:transparent;color:inherit;font-size:20px;line-height:1;cursor:pointer;opacity:.7;padding:0 4px}
+.notice-toast-x:hover{opacity:1}
+.notice-toast strong{display:block;font-size:14px;margin-bottom:4px}
+.notice-toast p{margin:0 0 8px;font-size:12.5px;line-height:1.5;white-space:pre-wrap}
+.notice-toast-go{font-size:12.5px;font-weight:650;color:#4f86d6;text-decoration:none}
+.notice-toast-go:hover{text-decoration:underline}
+.nav-badge{display:inline-grid;place-items:center;min-width:18px;height:18px;margin-left:8px;padding:0 5px;border-radius:9px;background:#d65a4f;color:#fff;font-size:11px;font-weight:700;line-height:1}
+@keyframes notice-in{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:none}}
+@media (max-width:760px){.notice-toasts{top:auto;bottom:14px;right:12px;left:12px;width:auto}}

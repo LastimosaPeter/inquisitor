@@ -6,6 +6,7 @@ import io
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -104,6 +105,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         "require_checkin INTEGER NOT NULL DEFAULT 0",
         "custom_scoring_note TEXT NOT NULL DEFAULT ''",
         "submissions_open INTEGER NOT NULL DEFAULT 1",
+        "allowed_emails TEXT NOT NULL DEFAULT ''",
+        "open_entry INTEGER NOT NULL DEFAULT 0",
         "paused_at TEXT",
         "pause_accumulated_seconds INTEGER NOT NULL DEFAULT 0",
         "practice_mode INTEGER NOT NULL DEFAULT 0",
@@ -157,6 +160,30 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         "package_format TEXT NOT NULL DEFAULT 'inquisitor'",
     ]:
         _add_column(conn, "problems", definition)
+
+    # Manual code review: one judge claims a submission, reviews the source, and may override the auto verdict.
+    for definition in [
+        "claimed_by INTEGER",
+        "claimed_at TEXT",
+        "reviewed_by INTEGER",
+        "reviewed_at TEXT",
+        "review_note TEXT NOT NULL DEFAULT ''",
+        "manual_override INTEGER NOT NULL DEFAULT 0",
+        "auto_verdict TEXT",
+        "feedback TEXT NOT NULL DEFAULT ''",
+        "feedback_by INTEGER",
+        "feedback_at TEXT",
+    ]:
+        _add_column(conn, "submissions", definition)
+    import diagnostics
+    diagnostics.ensure_tables(conn)
+    import telemetry
+    telemetry.ensure_tables(conn)
+
+    # Google sign-in: the stable Google account id (sub) of a student who signed in with ADNU Google.
+    _add_column(conn, "accounts", "google_sub TEXT")
+    _add_column(conn, "accounts", "alt_email TEXT")   # a second address that signs in as the same (staff) account
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_accounts_google_sub ON accounts(google_sub) WHERE google_sub IS NOT NULL")
 
     conn.executescript(
         """
@@ -383,6 +410,57 @@ def _staff_permission(permission: str):
     return deco
 
 
+def unusable_password_hash() -> str:
+    """Hash of a random 256-bit secret nobody knows, for accounts that only sign in with Google. Cheap on purpose:
+    the secret cannot be guessed, so the default (memory-hungry) password hash would only waste CPU at registration time."""
+    return generate_password_hash(secrets.token_hex(32), method="pbkdf2:sha256:1000")
+
+
+def parse_email_list(text: str) -> list[str]:
+    """Emails separated by new lines (or commas / semicolons / spaces), lower-cased, duplicates removed in order."""
+    seen, out = set(), []
+    for item in re.split(r"[\s,;]+", text or ""):
+        item = item.strip().strip("<>").lower()
+        if item and item not in seen:
+            seen.add(item); out.append(item)
+    return out
+
+
+def whitelist_staff(conn, core, contest_id: str, email: str, staff_role: str) -> str:
+    """Put `email` on a contest's staff list. They sign in with Google (no password). Returns 'director', 'created' or 'updated'."""
+    existing = conn.execute("SELECT * FROM accounts WHERE lower(email)=? OR lower(alt_email)=? ORDER BY id LIMIT 1", (email, email)).fetchone()
+    if existing and existing["role"] == "admin":
+        return "director"
+    if existing:
+        account_id, outcome = existing["id"], "updated"
+        conn.execute("UPDATE accounts SET role='judge' WHERE id=?", (account_id,))
+    else:
+        username = core._unique_username(conn, email)
+        cur = conn.execute("INSERT INTO accounts(username,email,password_hash,display_name,affiliation,role,created_at) VALUES(?,?,?,?,?,?,?)",
+                           (username, email, unusable_password_hash(), username, "TACTICS x ACPC", "judge", core.iso(core.utcnow())))
+        account_id, outcome = cur.lastrowid, "created"
+    conn.execute("DELETE FROM staff_assignments WHERE contest_id=? AND account_id=?", (contest_id, account_id))
+    conn.execute("INSERT INTO staff_assignments(contest_id,account_id,staff_role,created_at) VALUES(?,?,?,?)", (contest_id, account_id, staff_role, core.iso(core.utcnow())))
+    audit(conn, "staff.create", contest_id=contest_id, object_type="account", object_id=account_id, detail=f"{email} - {STAFF_ROLES[staff_role]} (from contest form)")
+    return outcome
+
+
+def staff_can(permission: str) -> bool:
+    """True if the signed-in user holds `permission` (admins and Contest Directors hold everything)."""
+    core = _core(); me = core.current_user()
+    if not me:
+        return False
+    if me["role"] == "admin":
+        return True
+    contest = core.active_contest()
+    if not contest:
+        return False
+    row = core.get_db().execute("SELECT staff_role FROM staff_assignments WHERE contest_id=? AND account_id=?", (contest["id"], me["id"])).fetchone()
+    role = row["staff_role"] if row else ("judge" if me["role"] == "judge" else "")
+    perms = ROLE_PERMISSIONS.get(role, set())
+    return "all" in perms or permission in perms
+
+
 def _csv_list(value: str) -> list[str]:
     return [x.strip() for x in re.split(r"[\n,;]+", value or "") if x.strip()]
 
@@ -452,16 +530,34 @@ def staff():
     core = _core(); conn = core.get_db(); contest = core.active_contest(conn)
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower(); email = request.form.get("email", "").strip().lower(); display = request.form.get("display_name", "").strip(); password = request.form.get("password", "").strip(); staff_role = request.form.get("staff_role", "judge")
+        email_ok = bool(email) and bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email))
+        google_only = email_ok and not password          # whitelisted by email: they sign in with Google, no password
         if staff_role not in STAFF_ROLES:
             flash("Invalid staff role.", "danger")
-        elif not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{2,31}", username or "") or len(password) < 6 or not display or (email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email)):
-            flash("Provide a valid username, name, and password of at least 6 characters.", "danger")
+        elif email and not email_ok:
+            flash("Enter a valid email address.", "danger")
+        elif not google_only and (not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{2,31}", username or "") or len(password) < 6 or not display):
+            flash("Enter the staff member's ADNU email, or a name, username and a password of at least 6 characters.", "danger")
         else:
             try:
-                cur = conn.execute("INSERT INTO accounts(username,email,password_hash,display_name,affiliation,role,created_at) VALUES(?,?,?,?,?,?,?)", (username, email, generate_password_hash(password), display, "TACTICS x ACPC", "judge", core.iso(core.utcnow())))
-                conn.execute("INSERT INTO staff_assignments(contest_id,account_id,staff_role,created_at) VALUES(?,?,?,?)", (contest["id"], cur.lastrowid, staff_role, core.iso(core.utcnow())))
-                audit(conn, "staff.create", contest_id=contest["id"], object_type="account", object_id=cur.lastrowid, detail=f"{display} - {STAFF_ROLES[staff_role]}")
-                conn.commit(); flash("Staff account created.", "success"); return redirect(url_for("v1.staff"))
+                existing = conn.execute("SELECT * FROM accounts WHERE lower(email)=? OR lower(alt_email)=? ORDER BY id LIMIT 1", (email, email)).fetchone() if email else None
+                if existing and existing["role"] == "admin":
+                    flash("That person is already a director.", "danger")
+                    return redirect(url_for("v1.staff"))
+                if existing:
+                    account_id = existing["id"]; display = existing["display_name"] or display
+                    conn.execute("UPDATE accounts SET role='judge' WHERE id=?", (account_id,))
+                else:
+                    if google_only:
+                        username = username or core._unique_username(conn, email); display = display or username; pw_hash = unusable_password_hash()
+                    else:
+                        pw_hash = generate_password_hash(password)
+                    cur = conn.execute("INSERT INTO accounts(username,email,password_hash,display_name,affiliation,role,created_at) VALUES(?,?,?,?,?,?,?)", (username, email, pw_hash, display, "TACTICS x ACPC", "judge", core.iso(core.utcnow())))
+                    account_id = cur.lastrowid
+                conn.execute("DELETE FROM staff_assignments WHERE contest_id=? AND account_id=?", (contest["id"], account_id))
+                conn.execute("INSERT INTO staff_assignments(contest_id,account_id,staff_role,created_at) VALUES(?,?,?,?)", (contest["id"], account_id, staff_role, core.iso(core.utcnow())))
+                audit(conn, "staff.create", contest_id=contest["id"], object_type="account", object_id=account_id, detail=f"{display or email} - {STAFF_ROLES[staff_role]}" + (" (Google sign-in)" if google_only else ""))
+                conn.commit(); flash("Added to staff. They sign in with Google using that address." if google_only else "Staff account created.", "success"); return redirect(url_for("v1.staff"))
             except sqlite3.IntegrityError:
                 conn.rollback(); flash("Username or email already exists.", "danger")
     rows = conn.execute("""SELECT a.*,s.staff_role FROM staff_assignments s JOIN accounts a ON a.id=s.account_id WHERE s.contest_id=? ORDER BY a.display_name""", (contest["id"],)).fetchall()
@@ -534,7 +630,7 @@ def emergency_action():
     elif action=="clear_broadcast":
         conn.execute("UPDATE contests SET emergency_message='' WHERE id=?",(contest["id"],)); msg="Emergency notice cleared."
     elif action=="restart_judging":
-        conn.execute("UPDATE submissions SET status='PENDING',verdict=NULL,runtime_ms=NULL,judging_started_at=NULL,judged_at=NULL,detail='Requeued by emergency control.' WHERE contest_id=? AND status!='PENDING'",(contest["id"],)); msg="All submissions requeued."
+        conn.execute("UPDATE submissions SET status='PENDING',verdict=NULL,runtime_ms=NULL,judging_started_at=NULL,judged_at=NULL,detail='Requeued by emergency control.' WHERE contest_id=? AND status!='PENDING' AND manual_override=0",(contest["id"],)); msg="All submissions requeued."
     else:
         abort(400)
     audit(conn,f"emergency.{action}",contest_id=contest["id"],object_type="contest",object_id=contest["id"],detail=msg); conn.commit(); flash(msg,"success"); return redirect(url_for("v1.operations"))
@@ -547,6 +643,31 @@ def public_announcements():
     me=core.current_user(); audience="participants" if me and me["role"]=="participant" else "all"
     rows=conn.execute("SELECT * FROM announcements WHERE contest_id=? AND (audience='all' OR audience=?) ORDER BY pinned DESC,id DESC",(contest["id"],audience)).fetchall()
     return render_template("v1_announcements.html", announcements=rows)
+
+
+@bp.get("/live/notices")
+def live_notices():
+    """What a signed-in browser polls every few seconds: the live 'Contest notice' banner text and the announcements it has not seen yet.
+    The announcements it may see follow the same audience rule as the Announcements page; ones the viewer published themselves are left out."""
+    core=_core(); me=core.current_user()
+    if not me: abort(401)
+    conn=core.get_db(); contest=core.active_contest(conn)
+    resp=jsonify({"emergency":"","latest_id":0,"unread":0,"items":[]})
+    resp.headers["Cache-Control"]="no-store"
+    if not contest: return resp
+    try: since=max(0,int(request.args.get("since","0")))
+    except ValueError: since=0
+    audience="participants" if me["role"]=="participant" else "all"
+    now=core.iso(core.utcnow())
+    base="contest_id=? AND (audience='all' OR audience=?) AND (expires_at IS NULL OR expires_at>?) AND (created_by IS NULL OR created_by!=?)"
+    args=(contest["id"],audience,now,me["id"])
+    unread=conn.execute(f"SELECT COUNT(*) FROM announcements WHERE {base} AND id>?",(*args,since)).fetchone()[0]
+    latest=conn.execute(f"SELECT COALESCE(MAX(id),0) FROM announcements WHERE {base}",args).fetchone()[0]
+    rows=conn.execute(f"SELECT id,title,body,severity,pinned,created_at FROM announcements WHERE {base} AND id>? ORDER BY id DESC LIMIT 5",(*args,since)).fetchall()
+    resp=jsonify({"emergency":contest["emergency_message"] or "","latest_id":latest,"unread":unread,
+                  "items":[{"id":r["id"],"title":r["title"],"body":r["body"][:600],"severity":r["severity"],"pinned":bool(r["pinned"]),"at":r["created_at"]} for r in reversed(rows)]})
+    resp.headers["Cache-Control"]="no-store"
+    return resp
 
 
 # ---------- Audit / disqualification history ----------
@@ -569,6 +690,10 @@ def _problem_package_bytes(problem, tests_dir: Path) -> bytes:
         yaml=(f"name: {problem['title']}\nlimits:\n  time_multiplier: 1\n  memory: {problem['memory_limit_mb']}\n")
         z.writestr("problem.yaml",yaml)
         z.writestr("problem_statement/problem.en.md",f"# {problem['title']}\n\n{problem['statement']}\n")
+        images_dir=tests_dir.parent/"images"
+        if images_dir.is_dir():
+            for pic in sorted(images_dir.iterdir()):
+                if pic.is_file(): z.write(pic,f"problem_statement/{pic.name}")
         z.writestr("inquisitor.json",json.dumps({"api_id":problem["api_id"],"code":problem["code"],"title":problem["title"],"difficulty":problem["difficulty"],"tags":problem["tags"],"contributors":problem["contributors"],"source":problem["source"],"points":problem["points"],"time_limit_ms":problem["time_limit_ms"],"memory_limit_mb":problem["memory_limit_mb"],"color":problem["color"]},indent=2))
         for inp in sorted(tests_dir.glob("input*.txt")):
             num=re.findall(r"\d+",inp.stem)[-1]; out=tests_dir/f"output{num}.txt"
@@ -634,10 +759,10 @@ def validate_problem(problem, conn=None) -> dict:
     check("Judge data",len(inputs)>0 and len(inputs)==len(outputs),f"{len(inputs)} inputs / {len(outputs)} outputs")
     check("Samples",bool(problem["sample_input"].strip())==bool(problem["sample_output"].strip()),"Sample pair is complete." if bool(problem["sample_input"].strip())==bool(problem["sample_output"].strip()) else "Sample input/output pair is incomplete.")
     if problem["reference_solution"] and problem["reference_language"]:
-        result=core.judge_submission(language=problem["reference_language"],source=problem["reference_solution"],tests_dir=td,time_limit_ms=problem["time_limit_ms"],memory_limit_mb=problem["memory_limit_mb"])
+        result=core.judge_submission(language=problem["reference_language"],source=problem["reference_solution"],tests_dir=td,time_limit_ms=problem["time_limit_ms"],memory_limit_mb=problem["memory_limit_mb"],output_limit_mb=problem["output_limit_mb"])
         check("Reference solution",result.get("verdict")=="AC",f"{result.get('verdict')}: {result.get('detail','')[:300]}")
     else:
-        check("Reference solution",False,"No reference solution configured.")
+        check("Reference solution",True,"No reference solution configured (optional): the hidden tests are used as they are.")
     if problem["validator_source"].strip():
         validator_ok=True; detail="Validator accepted all hidden inputs."
         try:
@@ -659,7 +784,7 @@ def validate_problem(problem, conn=None) -> dict:
 def validate_problem_route(pid):
     core=_core(); conn=core.get_db(); p=conn.execute("SELECT * FROM problems WHERE id=?",(pid,)).fetchone()
     if not p: abort(404)
-    report=validate_problem(p,conn); cur=conn.execute("INSERT INTO problem_validations(problem_id,status,report_json,validated_by,validated_at) VALUES(?,?,?,?,?)",(pid,"PASS" if report["ok"] else "FAIL",json.dumps(report),core.current_user()["id"],core.iso(core.utcnow()))); audit(conn,"problem.validate",contest_id=p["contest_id"],object_type="problem",object_id=pid,detail="PASS" if report["ok"] else "FAIL"); conn.commit(); flash("Problem validation passed." if report["ok"] else "Problem validation found issues.","success" if report["ok"] else "danger"); return redirect(url_for("admin_problems"))
+    report=validate_problem(p,conn); cur=conn.execute("INSERT INTO problem_validations(problem_id,status,report_json,validated_by,validated_at) VALUES(?,?,?,?,?)",(pid,"PASS" if report["ok"] else "FAIL",json.dumps(report),core.current_user()["id"],core.iso(core.utcnow()))); audit(conn,"problem.validate",contest_id=p["contest_id"],object_type="problem",object_id=pid,detail="PASS" if report["ok"] else "FAIL"); conn.commit(); flash("Problem validation passed." if report["ok"] else "Problem validation failed: "+"; ".join(f"{c['name']}: {c['detail']}" for c in report["checks"] if not c["ok"])[:500],"success" if report["ok"] else "danger"); return redirect(url_for("admin_problems"))
 
 
 # ---------- Registration, check-in, credentials ----------
@@ -763,12 +888,147 @@ def _normalize_source(src: str) -> str:
     src=re.sub(r"/\*.*?\*/"," ",src,flags=re.S); src=re.sub(r"//.*?$|#.*?$"," ",src,flags=re.M); src=re.sub(r"\s+"," ",src); return src.strip().lower()
 
 
+SIMILARITY_DEFAULT_THRESHOLD = 0.82
+SIMILARITY_MIN_SOURCE_CHARS = 40
+SIMILARITY_MAX_PAIRS = 150_000
+
+
+def _parse_threshold(raw) -> float:
+    try:
+        return max(.50, min(1.0, float(raw)))
+    except (TypeError, ValueError):
+        return SIMILARITY_DEFAULT_THRESHOLD
+
+
+def similarity_summary(conn, contest_id: str, *, scope: str, threshold: float, problem_code: str = "", show_all: bool = False):
+    """Per-participant similarity: each participant's highest-matching submission against everyone else's.
+
+    scope "latest" compares only each participant's most recent submission per problem; "all" includes older ones.
+    Nothing is stored. Two submissions are only compared when they are for the same problem in the same language.
+    Returns (rows, info) where rows are sorted by highest similarity and info carries counts / errors.
+    """
+    sql = """SELECT s.id, s.account_id, s.problem_id, s.language, s.source, s.submitted_at, a.display_name, p.code
+             FROM submissions s JOIN accounts a ON a.id=s.account_id JOIN problems p ON p.id=s.problem_id
+             WHERE s.contest_id=? AND s.status='DONE'"""
+    args = [contest_id]
+    if problem_code:
+        sql += " AND p.code=?"; args.append(problem_code)
+    subs = conn.execute(sql + " ORDER BY s.id", args).fetchall()
+    if scope == "latest":
+        newest = {}
+        for s in subs:
+            newest[(s["account_id"], s["problem_id"])] = s  # ordered by id, so the last one wins
+        subs = list(newest.values())
+    groups = {}
+    for s in subs:
+        groups.setdefault((s["problem_id"], s["language"]), []).append(s)
+    pair_total = sum(len(g) * (len(g) - 1) // 2 for g in groups.values())
+    info = {"submissions": len(subs), "pairs": pair_total, "error": ""}
+    if pair_total > SIMILARITY_MAX_PAIRS:
+        info["error"] = f"{pair_total:,} pairs is too many to compare at once. Use 'latest submission per problem' or pick one problem."
+        return [], info
+    people = {}
+    def person(s):
+        return people.setdefault(s["account_id"], {"account_id": s["account_id"], "name": s["display_name"], "best": 0.0, "matches": [], "compared": 0})
+    for s in subs:
+        person(s)
+    for group in groups.values():
+        norm = [_normalize_source(s["source"]) for s in group]
+        for i in range(len(group)):
+            # Canonical order: seq1 = the later submission, seq2 = the earlier one (difflib caches seq2, so this is also fast).
+            matcher = SequenceMatcher(None, "", norm[i], autojunk=True)
+            for j in range(i + 1, len(group)):
+                if group[i]["account_id"] == group[j]["account_id"]:
+                    continue
+                if min(len(norm[i]), len(norm[j])) < SIMILARITY_MIN_SOURCE_CHARS:
+                    continue
+                matcher.set_seq1(norm[j])
+                if not show_all and (matcher.real_quick_ratio() < threshold or matcher.quick_ratio() < threshold):
+                    continue
+                score = matcher.ratio()
+                if score < threshold and not show_all:
+                    continue
+                for me, other in ((group[i], group[j]), (group[j], group[i])):
+                    p = person(me)
+                    p["compared"] += 1
+                    if score >= threshold:
+                        p["matches"].append({"score": score, "other_id": other["account_id"], "other": other["display_name"], "code": me["code"],
+                                             "language": me["language"], "mine": me["id"], "theirs": other["id"]})
+                    if score > p["best"]:
+                        p["best"] = score
+    rows = []
+    for p in people.values():
+        p["matches"].sort(key=lambda m: -m["score"])
+        p["flagged"] = p["best"] >= threshold
+        p["top"] = p["matches"][0] if p["matches"] else None
+        if p["flagged"] or show_all:
+            rows.append(p)
+    rows.sort(key=lambda p: (-p["best"], p["name"].lower()))
+    info["participants"] = len(people)
+    info["flagged"] = sum(1 for p in people.values() if p["flagged"])
+    return rows, info
+
+
+def _feedback_rows(conn, contest_id, show="all"):
+    where = "s.contest_id=? AND s.status='DONE' AND s.verdict IS NOT NULL AND s.verdict!='AC'"
+    if show == "missing": where += " AND s.feedback=''"
+    elif show == "given": where += " AND s.feedback!=''"
+    return conn.execute(
+        f"""SELECT s.id, s.language, s.verdict, s.submitted_at, s.feedback, s.feedback_at, s.review_note,
+                   a.display_name participant, a.email participant_email, p.code, p.title, fb.display_name feedback_by_name
+            FROM submissions s JOIN accounts a ON a.id=s.account_id JOIN problems p ON p.id=s.problem_id
+            LEFT JOIN accounts fb ON fb.id=s.feedback_by
+            WHERE {where} ORDER BY a.display_name, p.ordinal, s.id""", (contest_id,)).fetchall()
+
+
+@bp.get("/director/feedback")
+@_staff_permission("analytics")
+def feedback_report():
+    core=_core(); conn=core.get_db(); contest=core.active_contest(conn)
+    show = request.args.get("show", "all")
+    if show not in {"all", "missing", "given"}: show = "all"
+    rows = _feedback_rows(conn, contest["id"], show)
+    allrows = _feedback_rows(conn, contest["id"], "all")
+    per = {}
+    for r in allrows:
+        d = per.setdefault(r["participant"], {"total": 0, "given": 0}); d["total"] += 1; d["given"] += 1 if r["feedback"] else 0
+    totals = {"not_accepted": len(allrows), "given": sum(1 for r in allrows if r["feedback"])}
+    totals["missing"] = totals["not_accepted"] - totals["given"]
+    return render_template("v1_feedback.html", contest=contest, rows=rows, per=per, totals=totals, show=show)
+
+
+@bp.get("/director/feedback.csv")
+@_staff_permission("analytics")
+def feedback_csv():
+    core=_core(); conn=core.get_db(); contest=core.active_contest(conn)
+    def safe(v):
+        v = "" if v is None else str(v)
+        return "'" + v if v[:1] in ("=", "+", "-", "@", "\t", "\r") else v   # a spreadsheet must never run a cell as a formula
+    out = io.StringIO(); w = csv.writer(out)
+    w.writerow(["submission", "participant", "email", "problem", "title", "language", "verdict", "submitted_at", "feedback", "feedback_by", "feedback_at"])
+    for r in _feedback_rows(conn, contest["id"], "all"):
+        w.writerow([r["id"], safe(r["participant"]), safe(r["participant_email"]), r["code"], safe(r["title"]), r["language"], r["verdict"], r["submitted_at"], safe(r["feedback"]), safe(r["feedback_by_name"]), r["feedback_at"] or ""])
+    resp = make_response("\ufeff" + out.getvalue()); resp.mimetype = "text/csv"
+    resp.headers["Content-Disposition"] = f"attachment; filename=feedback-{contest['id']}.csv"
+    audit(conn, "feedback.export", contest_id=contest["id"], object_type="contest", object_id=contest["id"], detail="Feedback report downloaded."); conn.commit()
+    return resp
+
+
 @bp.route("/director/similarity", methods=["GET", "POST"])
 @_staff_permission("analytics")
 def similarity_review():
     core=_core(); conn=core.get_db(); contest=core.active_contest(conn)
+    if request.method=="POST" and request.form.get("action")=="flag":
+        try: a=int(request.form.get("a","0")); b=int(request.form.get("b","0")); score=float(request.form.get("score","0"))
+        except ValueError: abort(400)
+        sa,sb=sorted((a,b))
+        ok=conn.execute("SELECT COUNT(*) FROM submissions WHERE contest_id=? AND id IN (?,?)",(contest["id"],sa,sb)).fetchone()[0]==2 and sa!=sb
+        if ok:
+            conn.execute("INSERT OR IGNORE INTO similarity_flags(contest_id,submission_a,submission_b,similarity,created_at) VALUES(?,?,?,?,?)",(contest["id"],sa,sb,score,core.iso(core.utcnow())))
+            audit(conn,"similarity.flag",contest_id=contest["id"],object_type="submission",object_id=f"{sa},{sb}",detail=f"Pair flagged for review at {score:.1%}"); conn.commit(); flash("Pair recorded for review below.","success")
+        return redirect(url_for("v1.similarity_review"))
     if request.method=="POST" and request.form.get("action")=="scan":
-        threshold=max(.50,min(1.0,float(request.form.get("threshold","0.82")))); subs=conn.execute("SELECT s.*,a.display_name,p.code FROM submissions s JOIN accounts a ON a.id=s.account_id JOIN problems p ON p.id=s.problem_id WHERE s.contest_id=? AND s.status='DONE' ORDER BY s.problem_id,s.id",(contest["id"],)).fetchall(); groups={}
+        threshold=_parse_threshold(request.form.get("threshold",SIMILARITY_DEFAULT_THRESHOLD)); subs=conn.execute("SELECT s.*,a.display_name,p.code FROM submissions s JOIN accounts a ON a.id=s.account_id JOIN problems p ON p.id=s.problem_id WHERE s.contest_id=? AND s.status='DONE' ORDER BY s.problem_id,s.id",(contest["id"],)).fetchall(); groups={}
         for s in subs: groups.setdefault((s["problem_id"],s["language"]),[]).append(s)
         count=0
         for arr in groups.values():
@@ -776,13 +1036,40 @@ def similarity_review():
                 for j in range(i+1,len(arr)):
                     if arr[i]["account_id"]==arr[j]["account_id"]: continue
                     a,b=_normalize_source(arr[i]["source"]),_normalize_source(arr[j]["source"])
-                    if min(len(a),len(b))<40: continue
-                    score=SequenceMatcher(None,a,b,autojunk=True).ratio()
+                    if min(len(a),len(b))<SIMILARITY_MIN_SOURCE_CHARS: continue
+                    score=SequenceMatcher(None,b,a,autojunk=True).ratio()
                     if score>=threshold:
                         sa,sb=sorted((arr[i]["id"],arr[j]["id"])); conn.execute("INSERT OR IGNORE INTO similarity_flags(contest_id,submission_a,submission_b,similarity,created_at) VALUES(?,?,?,?,?)",(contest["id"],sa,sb,score,core.iso(core.utcnow()))); count+=1
-        audit(conn,"similarity.scan",contest_id=contest["id"],object_type="contest",object_id=contest["id"],detail=f"threshold={threshold}; pairs={count}"); conn.commit(); flash(f"Similarity scan complete. {count} pair(s) met the threshold. Flags require manual review.","success"); return redirect(url_for("v1.similarity_review"))
+        audit(conn,"similarity.scan",contest_id=contest["id"],object_type="contest",object_id=contest["id"],detail=f"threshold={threshold}; pairs={count}"); conn.commit(); flash(f"Recorded {count} pair(s) at or above {threshold:.0%} for review.","success"); return redirect(url_for("v1.similarity_review"))
+    scope="all" if request.args.get("scope")=="all" else "latest"
+    threshold=_parse_threshold(request.args.get("threshold",SIMILARITY_DEFAULT_THRESHOLD)); problem_code=request.args.get("problem","").strip().upper(); show_all=request.args.get("everyone")=="1"
+    summary=None; info=None
+    if request.args.get("run")=="1":
+        summary,info=similarity_summary(conn,contest["id"],scope=scope,threshold=threshold,problem_code=problem_code,show_all=show_all)
+    problem_codes=[r["code"] for r in conn.execute("SELECT code FROM problems WHERE contest_id=? ORDER BY ordinal,code",(contest["id"],))]
     rows=conn.execute("""SELECT f.*,a1.display_name name_a,a2.display_name name_b,p.code FROM similarity_flags f JOIN submissions s1 ON s1.id=f.submission_a JOIN submissions s2 ON s2.id=f.submission_b JOIN accounts a1 ON a1.id=s1.account_id JOIN accounts a2 ON a2.id=s2.account_id JOIN problems p ON p.id=s1.problem_id WHERE f.contest_id=? ORDER BY f.similarity DESC,f.id DESC""",(contest["id"],)).fetchall()
-    return render_template("v1_similarity.html",flags=rows)
+    return render_template("v1_similarity.html",flags=rows,summary=summary,info=info,scope=scope,threshold=threshold,problem_code=problem_code,show_all=show_all,problem_codes=problem_codes)
+
+
+@bp.get("/director/similarity/compare")
+@_staff_permission("analytics")
+def similarity_compare():
+    core=_core(); conn=core.get_db(); contest=core.active_contest(conn)
+    try: a=int(request.args.get("a","0")); b=int(request.args.get("b","0"))
+    except ValueError: abort(400)
+    fetch=lambda sid: conn.execute("SELECT s.*,x.display_name,p.code,p.title FROM submissions s JOIN accounts x ON x.id=s.account_id JOIN problems p ON p.id=s.problem_id WHERE s.id=? AND s.contest_id=?",(sid,contest["id"])).fetchone()
+    left,right=fetch(a),fetch(b)
+    if not left or not right: abort(404)
+    ll,rl=left["source"].splitlines(),right["source"].splitlines(); rows=[]
+    for tag,i1,i2,j1,j2 in SequenceMatcher(None,ll,rl,autojunk=False).get_opcodes():
+        if tag=="equal":
+            rows += [(ll[i1+k],rl[j1+k],"same") for k in range(i2-i1)]
+        else:
+            n=max(i2-i1,j2-j1)
+            rows += [(ll[i1+k] if i1+k<i2 else None, rl[j1+k] if j1+k<j2 else None, "diff") for k in range(n)]
+    lo,hi=sorted((left,right),key=lambda r:r["id"])  # same order as similarity_summary so the percentages agree
+    score=SequenceMatcher(None,_normalize_source(hi["source"]),_normalize_source(lo["source"]),autojunk=True).ratio()
+    return render_template("v1_similarity_compare.html",left=left,right=right,rows=rows,score=score)
 
 
 @bp.post("/director/similarity/<int:fid>")
@@ -1005,6 +1292,25 @@ def network_status():
     return render_template("v1_network.html",health=health,compiler=comp)
 
 
+@bp.get("/director/diagnostics")
+@_staff_permission("network")
+def diagnostics_page():
+    import diagnostics
+    core=_core(); conn=core.get_db()
+    deep=request.args.get("deep")=="1"
+    report=diagnostics.collect(core,conn,deep=deep)
+    return render_template("v1_diagnostics.html",report=report,report_text=diagnostics.render_text(report),deep=deep)
+
+
+@bp.get("/director/diagnostics.txt")
+@_staff_permission("network")
+def diagnostics_text():
+    import diagnostics
+    core=_core(); conn=core.get_db()
+    resp=make_response(diagnostics.render_text(diagnostics.collect(core,conn,deep=request.args.get("deep")=="1"))); resp.mimetype="text/plain"; resp.headers["Cache-Control"]="no-store"
+    return resp
+
+
 # ---------- API settings ----------
 @bp.route("/director/api-settings", methods=["GET", "POST"])
 @_staff_permission("api")
@@ -1166,6 +1472,7 @@ def clone_contest(cid):
         for p in probs:
             pcols=[r[1] for r in conn.execute("PRAGMA table_info(problems)") if r[1] not in {"id","contest_id"}]; cur=conn.execute(f"INSERT INTO problems(contest_id,{','.join(pcols)}) VALUES(? ,{','.join('?' for _ in pcols)})",[new_id,*[p[c] for c in pcols]]); newp=conn.execute("SELECT * FROM problems WHERE id=?",(cur.lastrowid,)).fetchone(); src_td=core.problem_tests_dir(p); dst_td=core.problem_tests_dir(newp)
             if src_td.exists(): shutil.copytree(src_td,dst_td,dirs_exist_ok=True)
+            if (src_td.parent/"images").is_dir(): shutil.copytree(src_td.parent/"images",dst_td.parent/"images",dirs_exist_ok=True)
         audit(conn,"contest.clone",contest_id=new_id,object_type="contest",object_id=new_id,detail=f"Cloned from {cid}"); conn.commit(); flash("Contest cloned with problems and judge data. Contestants and submissions were not copied.","success")
     except Exception as exc:
         conn.rollback(); flash(f"Clone failed: {exc}","danger")

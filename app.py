@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import io
 import json
 import os
@@ -9,8 +10,12 @@ import re
 import secrets
 import sqlite3
 import shutil
+import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import zipfile
 from datetime import datetime, timedelta, timezone
 from functools import wraps
@@ -24,8 +29,11 @@ from flask import (
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from judge import LANGUAGES, compiler_status, detect_language_from_filename, judge_submission
+from judge import LANGUAGES, compiler_status, detect_language_from_filename, judge_backend, judge_submission
 import features_v1 as fx
+import theme
+import diagnostics
+import telemetry
 
 BASE_DIR = Path(__file__).resolve().parent
 # Vercel presentation mode uses the only writable area available to the
@@ -562,9 +570,10 @@ def init_db():
         conn.execute("UPDATE contests SET active=1 WHERE id=?", (first["id"],))
         active_row = first
     contest_id = active_row["id"]
-    registrations_were_empty = conn.execute(
-        "SELECT COUNT(*) FROM registrations WHERE contest_id=?", (contest_id,)
-    ).fetchone()[0] == 0
+    # Only a database that has no registrations at all (brand new, or an old single-contest one being upgraded) gets everyone registered.
+    # It used to run for any active contest with nobody registered, so activating a new empty contest and restarting the site registered
+    # every participant account in it.
+    registrations_were_empty = conn.execute("SELECT COUNT(*) FROM registrations").fetchone()[0] == 0
 
     if os.environ.get("INQUISITOR_DEMO_ACCOUNTS", "1") != "0":
         demo_participant = conn.execute("SELECT id FROM accounts WHERE username='contestant'").fetchone()
@@ -644,6 +653,24 @@ def role_required(*roles):
 
 
 participant_required = role_required("participant")
+
+
+def problem_reader_required(fn):
+    """Problem statements: contestants, and staff who judge or manage problems (read only)."""
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        user = current_user()
+        if not user:
+            return redirect(url_for("login", next=request.path))
+        if user["role"] != "participant" and not (user["role"] in ("judge", "admin") and (fx.staff_can("judge") or fx.staff_can("problems"))):
+            abort(403)
+        return fn(*args, **kwargs)
+    return wrapper
+
+
+def viewer_is_staff() -> bool:
+    user = current_user()
+    return bool(user and user["role"] in ("judge", "admin"))
 judge_required = role_required("judge", "admin")
 admin_required = role_required("admin")
 
@@ -678,10 +705,10 @@ def contest_state(contest):
     elif lifecycle == "draft":
         phase = "DRAFT"
         remaining = contest["duration_minutes"] * 60
-    elif lifecycle == "registration":
+    elif lifecycle == "registration" and not (start and now >= start):
         phase = "REGISTRATION"
         remaining = max(0, int((start - now).total_seconds())) if start and now < start else contest["duration_minutes"] * 60
-    elif lifecycle == "registration_closed":
+    elif lifecycle == "registration_closed" and not (start and now >= start):
         phase = "REGISTRATION CLOSED"
         remaining = max(0, int((start - now).total_seconds())) if start and now < start else contest["duration_minutes"] * 60
     elif lifecycle == "practice" or ("practice_mode" in contest.keys() and contest["practice_mode"]):
@@ -886,7 +913,7 @@ def standings(contest, cutoff: datetime | None = None):
                 if sub["verdict"] == "AC":
                     accepted = sub
                     break
-                if sub["verdict"] in {"WA", "TLE", "RTE"}:
+                if sub["verdict"] in {"WA", "TLE", "RTE", "OLE", "MLE"}:
                     wrong += 1
             problem_points = float(p["points"] if "points" in p.keys() else 100)
             if accepted:
@@ -969,6 +996,57 @@ def localdt(value):
     return dt.astimezone(PHT).strftime("%b %d, %Y · %I:%M %p")
 
 
+def google_login_config():
+    """Google sign-in settings, or None when it is not configured (needs INQUISITOR_GOOGLE_CLIENT_ID and _CLIENT_SECRET).
+
+    Only Google accounts whose address AND hosted-domain claim are on an allowed domain can register or sign in
+    (INQUISITOR_GOOGLE_DOMAINS, comma separated; default adnu.edu.ph and gbox.adnu.edu.ph).
+    """
+    client_id = os.environ.get("INQUISITOR_GOOGLE_CLIENT_ID", "").strip()
+    client_secret = os.environ.get("INQUISITOR_GOOGLE_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
+        return None
+    raw = os.environ.get("INQUISITOR_GOOGLE_DOMAINS", "adnu.edu.ph,gbox.adnu.edu.ph")
+    return {
+        "client_id": client_id, "client_secret": client_secret,
+        "domains": [d.strip().lower().lstrip("@") for d in raw.split(",") if d.strip()],
+        # endpoints can be overridden so the flow can be tested against a fake Google
+        "auth_url": os.environ.get("INQUISITOR_GOOGLE_AUTH_URL", "https://accounts.google.com/o/oauth2/v2/auth"),
+        "token_url": os.environ.get("INQUISITOR_GOOGLE_TOKEN_URL", "https://oauth2.googleapis.com/token"),
+    }
+
+
+_LIGHT_CSS_CACHE: dict = {}
+
+
+def light_accent() -> str:
+    accent = os.environ.get("INQUISITOR_LIGHT_ACCENT", "blue").strip().lower()
+    return accent if accent in theme.ACCENTS else "blue"
+
+
+def _stylesheet_version() -> int:
+    try:
+        return int((BASE_DIR / "static" / "style.css").stat().st_mtime) + int((BASE_DIR / "theme.py").stat().st_mtime)
+    except OSError:
+        return 0
+
+
+@app.get("/theme/light.css")
+def light_css():
+    """The light stylesheet, derived from static/style.css (see theme.py) and cached until either file changes."""
+    accent = request.args.get("a") or light_accent()
+    if accent not in theme.ACCENTS:
+        accent = "blue"
+    key = (accent, _stylesheet_version())
+    if key not in _LIGHT_CSS_CACHE:
+        _LIGHT_CSS_CACHE.clear()
+        _LIGHT_CSS_CACHE[key] = theme.build_light_css((BASE_DIR / "static" / "style.css").read_text(encoding="utf-8"), accent)
+    resp = make_response(_LIGHT_CSS_CACHE[key])
+    resp.mimetype = "text/css"
+    resp.headers["Cache-Control"] = "public, max-age=3600"
+    return resp
+
+
 @app.context_processor
 def inject_globals():
     me = current_user()
@@ -982,12 +1060,38 @@ def inject_globals():
         "cstate": contest_state(contest) if contest else None,
         "languages": LANGUAGES,
         "compiler_status": compiler_status(),
+        "server_now_iso": iso(utcnow()),
+        "theme": "dark" if (request.cookies.get("theme") or os.environ.get("INQUISITOR_DEFAULT_THEME", "light")) == "dark" else "light",
+        "light_css_url": url_for("light_css", a=request.args.get("accent") or light_accent(), v=_stylesheet_version()),
+        "google_login": google_login_config(),
+        "demo_mode": os.environ.get("INQUISITOR_DEMO_ACCOUNTS", "1") != "0",
         "version": "v1.0.8",
         "release_name": "Galahad",
         "csrf_token": session["csrf_token"],
         "staff_role": staff_role,
         "staff_role_label": fx.STAFF_ROLES.get(staff_role, "Contest Director" if me and me["role"]=="admin" else "Judge"),
     }
+
+
+@app.before_request
+def telemetry_begin():
+    try:
+        g._t0 = time.perf_counter()
+        telemetry.start(sys.modules[__name__], "web")     # once per process: flushes counters and samples resources every minute
+    except Exception:
+        pass
+
+
+@app.after_request
+def telemetry_end(response):
+    try:
+        t0 = getattr(g, "_t0", None)
+        if t0 is not None:
+            telemetry.record_request(sys.modules[__name__], request.endpoint or "(no route)", request.method, request.path, response.status_code,
+                                     (time.perf_counter() - t0) * 1000.0, session.get("user_id"))
+    except Exception:
+        pass
+    return response
 
 
 @app.before_request
@@ -1026,6 +1130,21 @@ def security_headers(response):
     return response
 
 
+@app.errorhandler(Exception)
+def remember_server_errors(exc):
+    """Unexpected failures are written to the diagnostics page (path and message only), then shown as a normal 500."""
+    from werkzeug.exceptions import HTTPException
+    if isinstance(exc, HTTPException):
+        return exc
+    import diagnostics
+    me = None
+    try: me = current_user()
+    except Exception: pass
+    diagnostics.record_error(sys.modules[__name__], exc, request.method, request.path, me["username"] if me else "")
+    print("Server error:", repr(exc), flush=True)
+    return make_response("Internal Server Error: something went wrong on our side. Please tell a judge or director.", 500)
+
+
 @app.get("/healthz")
 def healthz():
     try:
@@ -1035,27 +1154,39 @@ def healthz():
         return jsonify({"status":"error"}),503
 
 
+def staff_landing_endpoint(me) -> str:
+    """The first page a staff member's role gives access to (so a problem setter does not land on a 403)."""
+    contest = active_contest()
+    role = (fx.staff_display_role(contest["id"], me["id"]) if contest else None) or "judge"
+    perms = fx.ROLE_PERMISSIONS.get(role, set())
+    for perm, endpoint in (("judge", "judge_console"), ("problems", "admin_problems"), ("participants", "admin_participants"), ("announcements", "v1.public_announcements")):
+        if "all" in perms or perm in perms:
+            return endpoint
+    return "leaderboard"
+
+
 @app.route("/")
 def index():
     me = current_user()
     if not me:
-        return redirect(url_for("leaderboard"))
+        return redirect(url_for("login") if google_login_config() else url_for("leaderboard"))
     if me["role"] == "admin":
         return redirect(url_for("admin_dashboard"))
     if me["role"] == "judge":
-        return redirect(url_for("judge_console"))
+        return redirect(url_for(staff_landing_endpoint(me)))
     return redirect(url_for("dashboard"))
 
 
-@app.route("/login", methods=["GET", "POST"])
-def login():
+def _password_login_view(template: str):
+    """Username + password sign-in (rate limited). Used by /login when Google sign-in is not configured, and by the staff sign-in page."""
     if request.method == "POST":
         client=(request.remote_addr or "unknown")[:80]; now_ts=time.time()
         attempts=[t for t in LOGIN_ATTEMPTS.get(client,[]) if now_ts-t<LOGIN_WINDOW_SECONDS]
         LOGIN_ATTEMPTS[client]=attempts
         if len(attempts)>=LOGIN_MAX_FAILURES:
+            telemetry.auth_event(sys.modules[__name__], "password_rate_limited")
             flash("Too many failed sign-in attempts. Try again in a few minutes.", "danger")
-            return render_template("login.html"), 429
+            return render_template(template, staff_open=True), 429
         username = request.form.get("username", "").strip().lower()
         password = request.form.get("password", "")
         user = get_db().execute("SELECT * FROM accounts WHERE username=? OR email=?", (username, username)).fetchone()
@@ -1063,20 +1194,318 @@ def login():
             LOGIN_ATTEMPTS.pop(client,None)
             session.clear()
             session["user_id"] = user["id"]
+            telemetry.auth_event(sys.modules[__name__], "password_ok", user["role"])
             flash(f"Welcome, {user['display_name']}.", "success")
             if user["role"]=="participant":
                 c=active_contest(get_db()); reg=participant_registered(c["id"],user["id"],get_db()) if c else None
                 if reg and reg["temporary_password"]: return redirect(url_for("change_password"))
             return redirect(url_for("index"))
         attempts.append(now_ts); LOGIN_ATTEMPTS[client]=attempts
+        telemetry.auth_event(sys.modules[__name__], "password_fail")
         flash("Invalid username or password.", "danger")
-    return render_template("login.html")
+        return render_template(template, staff_open=True)
+    return render_template(template)
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if google_login_config():
+        # Students use Google. The password form is not offered here, and the endpoint refuses password attempts.
+        if request.method == "POST":
+            abort(404)
+        return render_template("login.html")
+    return _password_login_view("login.html")
+
+
+def staff_login_path() -> str:
+    """Hidden address of the director/judge password sign-in (INQUISITOR_STAFF_LOGIN_PATH, or derived from the secret key)."""
+    custom = os.environ.get("INQUISITOR_STAFF_LOGIN_PATH", "").strip()
+    if custom:
+        return "/" + custom.strip("/")
+    digest = hmac.new(app.config["SECRET_KEY"].encode(), b"inquisitor-staff-login", hashlib.sha256).hexdigest()[:24]
+    return "/staff-" + digest
+
+
+def staff_login():
+    resp = make_response(_password_login_view("login_staff.html"))
+    resp.headers["X-Robots-Tag"] = "noindex, nofollow"
+    return resp
+
+
+app.add_url_rule(staff_login_path(), "staff_login", staff_login, methods=["GET", "POST"])
+
+
+# ---- Google sign-in (ADNU accounts) ----------------------------------------------------------------
+# Authorization-code flow with PKCE. The ID token is received straight from Google's token endpoint over TLS
+# (OpenID Connect Core 3.1.3.7), so we validate its claims; only accounts on the allowed domains get in.
+GOOGLE_ISSUERS = {"https://accounts.google.com", "accounts.google.com"}
+GOOGLE_STATE_TTL = 600
+GOOGLE_PENDING_TTL = 1800
+GOOGLE_DOMAIN_ERROR = "That Google account is not an ADNU account. Sign in with your {domains} email."
+
+
+def registration_is_closed(contest) -> bool:
+    now = utcnow()
+    reg_start = parse_dt(contest["registration_start"]) if contest["registration_start"] else None
+    reg_end = parse_dt(contest["registration_end"]) if contest["registration_end"] else None
+    return bool((not contest["signup_open"]) or (reg_start and now < reg_start) or (reg_end and now > reg_end)
+                or contest["lifecycle_phase"] in {"registration_closed", "running", "ended", "finalized", "archived"})
+
+
+def parse_allowed_emails(raw: str, open_entry: bool = False) -> str:
+    """Validate the 'only these emails may register' list: ADNU addresses, or any address when the contest is open to non-Ateneo entrants."""
+    emails = fx.parse_email_list(raw)
+    domains = (google_login_config() or {}).get("domains") or ["adnu.edu.ph", "gbox.adnu.edu.ph"]
+    bad = [e for e in emails if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", e) or (not open_entry and e.rpartition("@")[2] not in domains)]
+    if bad:
+        raise ValueError(("These are not valid email addresses: " if open_entry else "These are not ADNU email addresses (" + ", ".join("@" + d for d in domains) + ") so they cannot be on the contestant list unless the contest is open to non-Ateneo entrants: ") + ", ".join(bad[:8]) + ". Nothing was saved.")
+    return "\n".join(emails)
+
+
+def contestant_email_allowed(contest, email: str) -> bool:
+    """An empty list means any ADNU account may register; otherwise only listed emails may."""
+    listed = fx.parse_email_list(contest["allowed_emails"] if "allowed_emails" in contest.keys() else "")
+    return not listed or email.strip().lower() in listed
+
+
+def _not_listed_message(email: str) -> str:
+    return f"Registration for this contest is limited to a list of students and {email} is not on it. Ask the organizers to add it."
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def _google_redirect_uri() -> str:
+    base = os.environ.get("INQUISITOR_PUBLIC_URL", "").strip().rstrip("/") or request.url_root.rstrip("/")
+    return base + "/auth/google/callback"
+
+
+def _domains_text(cfg) -> str:
+    return " or ".join("@" + d for d in cfg["domains"])
+
+
+def _google_fail(message: str):
+    telemetry.auth_event(sys.modules[__name__], "google_fail", message)
+    flash(message, "danger")
+    return redirect(url_for("login"))
+
+
+def _google_exchange_code(cfg, code: str, verifier: str) -> dict:
+    body = urllib.parse.urlencode({
+        "code": code, "client_id": cfg["client_id"], "client_secret": cfg["client_secret"],
+        "redirect_uri": _google_redirect_uri(), "grant_type": "authorization_code", "code_verifier": verifier,
+    }).encode()
+    req = urllib.request.Request(cfg["token_url"], data=body, headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _jwt_claims(token: str) -> dict:
+    parts = (token or "").split(".")
+    if len(parts) != 3:
+        raise ValueError("not a JWT")
+    return json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+
+
+def _check_google_claims(cfg, claims: dict, nonce: str, allow_external: bool = False) -> str | None:
+    """Return None when the ID token is acceptable, otherwise a message for the student.
+
+    allow_external is True only while the active contest is open to non-Ateneo participants (any verified Google account).
+    """
+    if claims.get("iss") not in GOOGLE_ISSUERS:
+        return "Google sign-in could not be verified. Please try again."
+    aud = claims.get("aud")
+    if cfg["client_id"] not in (aud if isinstance(aud, list) else [aud]):
+        return "Google sign-in could not be verified. Please try again."
+    try:
+        if float(claims.get("exp", 0)) < time.time():
+            return "Google sign-in could not be verified. Please try again."
+    except (TypeError, ValueError):
+        return "Google sign-in could not be verified. Please try again."
+    if not nonce or not hmac.compare_digest(str(claims.get("nonce", "")), nonce):
+        return "Google sign-in could not be verified. Please try again."
+    email = str(claims.get("email", "")).strip().lower()
+    if not claims.get("sub") or not email or claims.get("email_verified") not in (True, "true"):
+        return "Google sign-in could not be verified. Please try again."
+    if allow_external:
+        return None
+    domain = email.rpartition("@")[2]
+    hosted = str(claims.get("hd", "")).strip().lower()
+    # Both the address and Google's hosted-domain claim must be ADNU: a personal Gmail account has no hd claim.
+    if domain not in cfg["domains"] or hosted not in cfg["domains"]:
+        return GOOGLE_DOMAIN_ERROR.format(domains=_domains_text(cfg))
+    return None
+
+
+def _unique_username(conn, email: str) -> str:
+    base = re.sub(r"[^a-z0-9._-]", "", email.split("@")[0].lower()).strip("._-")[:28] or "student"
+    if len(base) < 3:
+        base = (base + "student")[:12]
+    name, n = base, 1
+    while conn.execute("SELECT 1 FROM accounts WHERE username=?", (name,)).fetchone():
+        n += 1
+        name = f"{base}{n}"
+    return name
+
+
+@app.get("/auth/google")
+def google_login():
+    telemetry.auth_event(sys.modules[__name__], "google_start")
+    cfg = google_login_config()
+    if not cfg:
+        abort(404)
+    if current_user():
+        return redirect(url_for("index"))
+    state, nonce, verifier = secrets.token_urlsafe(24), secrets.token_urlsafe(24), secrets.token_urlsafe(48)
+    session["google_oauth"] = {"state": state, "nonce": nonce, "verifier": verifier, "at": time.time()}
+    params = {
+        "client_id": cfg["client_id"], "redirect_uri": _google_redirect_uri(), "response_type": "code", "scope": "openid email profile",
+        "state": state, "nonce": nonce, "code_challenge": _b64url(hashlib.sha256(verifier.encode()).digest()), "code_challenge_method": "S256",
+        "prompt": "select_account", "hd": "*",
+    }
+    return redirect(cfg["auth_url"] + "?" + urllib.parse.urlencode(params))
+
+
+@app.get("/auth/google/callback")
+def google_callback():
+    cfg = google_login_config()
+    if not cfg:
+        abort(404)
+    saved = session.pop("google_oauth", None)          # single use: a replayed callback finds nothing
+    if request.args.get("error"):
+        return _google_fail("Google sign-in was cancelled.")
+    given = request.args.get("state", "")
+    if not saved or time.time() - saved.get("at", 0) > GOOGLE_STATE_TTL or not given or not hmac.compare_digest(saved["state"], given):
+        return _google_fail("That sign-in link expired. Please try again.")
+    code = request.args.get("code", "")
+    if not code:
+        return _google_fail("Google sign-in did not complete. Please try again.")
+    try:
+        tokens = _google_exchange_code(cfg, code, saved["verifier"])
+        claims = _jwt_claims(tokens.get("id_token", ""))
+    except Exception as exc:                            # network, bad response, malformed token
+        print("Google sign-in failed:", repr(exc), flush=True)
+        return _google_fail("Could not complete sign-in with Google. Please try again.")
+    conn = get_db(); contest = active_contest(conn)
+    problem = _check_google_claims(cfg, claims, saved["nonce"], allow_external=bool(contest and contest["open_entry"]))
+    if problem:
+        return _google_fail(problem)
+    email, sub = str(claims["email"]).strip().lower(), str(claims["sub"])
+    name = str(claims.get("name") or email.split("@")[0]).strip()[:120]
+    account = conn.execute("SELECT * FROM accounts WHERE google_sub=?", (sub,)).fetchone()
+    if not account:
+        account = conn.execute("SELECT * FROM accounts WHERE lower(email)=? OR lower(alt_email)=? ORDER BY id LIMIT 1", (email, email)).fetchone()
+    if account and account["role"] in ("admin", "judge"):
+        # Directors and judges: a Google account that is verified to own the address on file signs in directly
+        # (the registration window does not apply to staff). The name is taken from Google the first time.
+        first_link = not account["google_sub"]
+        conn.execute("UPDATE accounts SET google_sub=COALESCE(google_sub,?), display_name=CASE WHEN ? THEN ? ELSE display_name END WHERE id=?", (sub, 1 if first_link else 0, name, account["id"]))
+        session.clear(); session["user_id"] = account["id"]
+        telemetry.auth_event(sys.modules[__name__], "google_ok_staff")
+        fx.audit(conn, "auth.google_staff", contest_id=contest["id"] if contest else None, object_type="account", object_id=account["id"], detail=f"{email} signed in with Google", actor=account)
+        conn.commit()
+        flash("Welcome, " + (name if first_link else account["display_name"]) + ".", "success")
+        return redirect(url_for("index"))
+    if account and account["role"] != "participant":
+        return _google_fail("This account cannot sign in with Google.")
+    if account:
+        if not account["google_sub"]:
+            conn.execute("UPDATE accounts SET google_sub=? WHERE id=?", (sub, account["id"])); conn.commit()
+        registered = participant_registered(contest["id"], account["id"], conn) if contest else True
+        if not registered and contest and not registration_is_closed(contest):
+            if not contestant_email_allowed(contest, email):
+                return _google_fail(_not_listed_message(email))
+            session.clear()
+            session["google_pending"] = {"sub": sub, "email": email, "name": account["display_name"] or name, "account_id": account["id"], "at": time.time()}
+            return redirect(url_for("google_complete"))
+        session.clear(); session["user_id"] = account["id"]
+        telemetry.auth_event(sys.modules[__name__], "google_ok_returning_student")
+        flash(f"Welcome, {account['display_name']}.", "success")
+        return redirect(url_for("index"))
+    if not contest:
+        return _google_fail("No contest is open for registration yet.")
+    if registration_is_closed(contest):
+        return _google_fail("Registration is closed. Only students who registered earlier can sign in.")
+    if not contestant_email_allowed(contest, email):
+        return _google_fail(_not_listed_message(email))
+    session.clear()
+    session["google_pending"] = {"sub": sub, "email": email, "name": name, "at": time.time()}
+    return redirect(url_for("google_complete"))
+
+
+@app.route("/auth/google/complete", methods=["GET", "POST"])
+def google_complete():
+    cfg = google_login_config()
+    if not cfg:
+        abort(404)
+    pending = session.get("google_pending")
+    if not pending or time.time() - pending.get("at", 0) > GOOGLE_PENDING_TTL:
+        session.pop("google_pending", None)
+        return _google_fail("Your sign-in expired. Please sign in with Google again.")
+    conn = get_db(); contest = active_contest(conn)
+    if not contest or registration_is_closed(contest):
+        session.pop("google_pending", None)
+        return _google_fail("Registration is closed. Only students who registered earlier can sign in.")
+    if not contestant_email_allowed(contest, pending["email"]):
+        session.pop("google_pending", None)
+        return _google_fail(_not_listed_message(pending["email"]))
+    institutions = conn.execute("SELECT * FROM institutions WHERE active=1 ORDER BY name").fetchall()
+    if request.method == "POST":
+        f = request.form
+        display_name = f.get("display_name", "").strip(); department = f.get("department", "").strip(); college = f.get("college", "").strip()
+        year_level = f.get("year_level", "").strip(); affiliation = f.get("affiliation", "").strip(); team_name = f.get("team_name", "").strip() if contest["competition_mode"] == "team" else ""
+        try:
+            if not display_name:
+                raise ValueError("Full name is required.")
+            if not department:
+                raise ValueError("Department / program is required.")
+            errors = fx.eligibility_errors(contest, department=department, college=college, institution=affiliation, year_level=year_level)
+            if errors:
+                raise ValueError(" ".join(errors))
+            if contest["competition_mode"] == "team" and team_name:
+                ok, _count = fx.team_size_ok(conn, contest, team_name)
+                if not ok:
+                    raise ValueError(f"Team '{team_name}' already reached the maximum of {contest['max_team_size']} members.")
+            inst = conn.execute("SELECT id FROM institutions WHERE lower(name)=lower(?) OR lower(short_name)=lower(?)", (affiliation, affiliation)).fetchone() if affiliation else None
+            iid = inst["id"] if inst else None
+            approval = "PENDING" if contest["requires_approval"] else "APPROVED"
+            aid = pending.get("account_id")
+            if aid:
+                conn.execute("UPDATE accounts SET display_name=?,affiliation=?,department=?,college=?,year_level=?,institution_id=? WHERE id=? AND role='participant'",
+                             (display_name, affiliation, department, college, year_level, iid, aid))
+            else:
+                cur = conn.execute(
+                    "INSERT INTO accounts(username,email,password_hash,display_name,affiliation,department,college,year_level,institution_id,role,google_sub,created_at) VALUES(?,?,?,?,?,?,?,?,?, 'participant', ?, ?)",
+                    (_unique_username(conn, pending["email"]), pending["email"], fx.unusable_password_hash(), display_name, affiliation, department, college, year_level, iid, pending["sub"], iso(utcnow())))
+                aid = cur.lastrowid
+            conn.execute("INSERT OR IGNORE INTO registrations(contest_id,account_id,team_api_id,team_name,approval_status,registration_status,coach_name,adviser_name) VALUES(?,?,?,?,?,?,?,?)",
+                         (contest["id"], aid, f"p-{aid}", team_name, approval, "REGISTERED", "", ""))
+            fx.audit(conn, "registration.google", contest_id=contest["id"], object_type="account", object_id=aid, detail=f"{display_name}; {pending['email']}; approval={approval}",
+                     actor={"id": aid, "display_name": display_name})
+            conn.commit()
+            session.clear(); session["user_id"] = aid
+            telemetry.auth_event(sys.modules[__name__], "google_registered", "pending approval" if approval == "PENDING" else "")
+            flash("Registration submitted and awaiting approval." if approval == "PENDING" else "You are registered. Good luck!", "success")
+            return redirect(url_for("dashboard"))
+        except ValueError as exc:
+            conn.rollback(); flash(str(exc), "danger")
+    return render_template("google_complete.html", pending=pending, institutions=institutions)
+
+
+@app.get("/auth/google/cancel")
+def google_cancel():
+    session.pop("google_pending", None)
+    return redirect(url_for("login"))
 
 
 @app.route("/signup", methods=["GET", "POST"])
 def signup():
     if current_user():
         return redirect(url_for("index"))
+    if google_login_config() and os.environ.get("INQUISITOR_PASSWORD_SIGNUP", "0") != "1":
+        flash("Students register by signing in with their ADNU Google account.", "success")
+        return redirect(url_for("login"))
     conn = get_db(); contest = active_contest(conn)
     if not contest:
         flash("No active contest is available for registration.", "danger")
@@ -1136,7 +1565,7 @@ def change_password():
 @app.route("/logout")
 def logout():
     session.clear()
-    return redirect(url_for("leaderboard"))
+    return redirect(url_for("index"))      # the sign-in page when Google sign-in is on, otherwise the leaderboard as before
 
 
 @app.route("/dashboard")
@@ -1145,7 +1574,7 @@ def dashboard():
     me = current_user()
     contest = active_contest()
     reg = participant_registered(contest["id"], me["id"])
-    problems = get_db().execute("SELECT * FROM problems WHERE contest_id=? AND enabled=1 ORDER BY ordinal,code",(contest["id"],)).fetchall()
+    problems = [] if problems_hidden_from_students(contest) else get_db().execute("SELECT * FROM problems WHERE contest_id=? AND enabled=1 ORDER BY ordinal,code",(contest["id"],)).fetchall()
     board, _ = standings(contest)
     mine = next((r for r in board if me["id"] in r["participant"].get("account_ids", [])), None)
     recent = get_db().execute(
@@ -1153,25 +1582,141 @@ def dashboard():
            WHERE s.contest_id=? AND s.account_id=? ORDER BY s.id DESC LIMIT 8""",
         (contest["id"], me["id"])
     ).fetchall()
-    return render_template("dashboard.html", reg=reg, problems=problems, mine=mine, recent=recent)
+    return render_template("dashboard.html", reg=reg, problems=problems, mine=mine, recent=recent, problems_hidden=problems_hidden_from_students(contest))
+
+
+PROBLEMS_HIDDEN_PHASES = {"DRAFT", "REGISTRATION", "REGISTRATION CLOSED", "UPCOMING", "SCHEDULED"}
+
+
+def problems_hidden_from_students(contest) -> bool:
+    """Statements, pictures and titles stay hidden from students until the contest starts (staff always see them)."""
+    return contest_state(contest)["phase"] in PROBLEMS_HIDDEN_PHASES
 
 
 @app.route("/problems")
-@participant_required
+@problem_reader_required
 def problems():
     contest = active_contest()
+    staff = viewer_is_staff()
+    if staff:
+        rows = get_db().execute("SELECT * FROM problems WHERE contest_id=? ORDER BY ordinal,code", (contest["id"],)).fetchall()
+        return render_template("problems.html", problems=rows, staff_view=True)
+    if problems_hidden_from_students(contest):
+        flash("The problems appear here when the contest starts.", "info")
+        return redirect(url_for("dashboard"))
     rows=get_db().execute("SELECT * FROM problems WHERE contest_id=? AND enabled=1 ORDER BY ordinal,code",(contest["id"],)).fetchall()
     return render_template("problems.html", problems=rows)
 
 
-@app.route("/problem/<code>")
-@participant_required
-def problem(code):
-    contest = active_contest()
-    p = get_db().execute("SELECT * FROM problems WHERE contest_id=? AND code=? AND enabled=1", (contest["id"], code.upper())).fetchone()
+# ---- Pictures in problem statements -------------------------------------------------------------------
+IMAGE_TYPES = {"png": "image/png", "jpg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"}
+MAX_IMAGE_BYTES = 2 * 1024 * 1024
+MAX_IMAGES_PER_PROBLEM = 12
+IMAGE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def problem_images_dir(contest_id: str, api_id: str) -> Path:
+    return PROBLEMS_DIR / contest_id / api_id / "images"
+
+
+def list_problem_images(contest_id: str, api_id: str) -> list[str]:
+    folder = problem_images_dir(contest_id, api_id)
+    if not folder.is_dir():
+        return []
+    return sorted(f.name for f in folder.iterdir() if f.is_file() and IMAGE_NAME_RE.fullmatch(f.name) and f.suffix.lower().lstrip(".") in IMAGE_TYPES)
+
+
+def sniff_image_ext(data: bytes) -> str | None:
+    """The real type of an uploaded picture, from its first bytes (the file name is not trusted)."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"): return "png"
+    if data[:3] == b"\xff\xd8\xff": return "jpg"
+    if data[:6] in (b"GIF87a", b"GIF89a"): return "gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP": return "webp"
+    return None
+
+
+@app.post("/admin/problems/<int:pid>/images")
+@fx._staff_permission("problems")
+def admin_upload_problem_images(pid):
+    conn = get_db(); p = conn.execute("SELECT * FROM problems WHERE id=?", (pid,)).fetchone()
     if not p:
         abort(404)
-    return render_template("problem.html", p=p)
+    folder = problem_images_dir(p["contest_id"], p["api_id"]); folder.mkdir(parents=True, exist_ok=True)
+    existing = set(list_problem_images(p["contest_id"], p["api_id"])); saved, problems = [], []
+    for f in request.files.getlist("images"):
+        if not f or not f.filename:
+            continue
+        data = f.read(MAX_IMAGE_BYTES + 1)
+        if len(data) > MAX_IMAGE_BYTES:
+            problems.append(f"{f.filename}: larger than 2 MB"); continue
+        ext = sniff_image_ext(data)
+        if not ext:
+            problems.append(f"{f.filename}: not a PNG, JPEG, GIF or WebP picture"); continue
+        stem = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(f.filename).stem).strip(".-_")[:48] or "picture"
+        name = f"{stem}.{ext}"
+        if name not in existing and len(existing) >= MAX_IMAGES_PER_PROBLEM:
+            problems.append(f"{f.filename}: this problem already has {MAX_IMAGES_PER_PROBLEM} pictures"); continue
+        (folder / name).write_bytes(data); existing.add(name); saved.append(name)
+    if saved:
+        fx.audit(conn, "problem.images", contest_id=p["contest_id"], object_type="problem", object_id=p["code"], detail="uploaded " + ", ".join(saved)); conn.commit()
+        flash("Uploaded: " + ", ".join(saved) + ". Use ![description](" + saved[0] + ") in the statement.", "success")
+    if problems:
+        flash("Not uploaded: " + "; ".join(problems), "danger")
+    if not saved and not problems:
+        flash("Choose a picture to upload.", "danger")
+    return redirect(url_for("admin_problems"))
+
+
+@app.post("/admin/problems/<int:pid>/images/<name>/delete")
+@fx._staff_permission("problems")
+def admin_delete_problem_image(pid, name):
+    conn = get_db(); p = conn.execute("SELECT * FROM problems WHERE id=?", (pid,)).fetchone()
+    if not p or not IMAGE_NAME_RE.fullmatch(name):
+        abort(404)
+    path = problem_images_dir(p["contest_id"], p["api_id"]) / name
+    if path.is_file():
+        path.unlink()
+        fx.audit(conn, "problem.images", contest_id=p["contest_id"], object_type="problem", object_id=p["code"], detail="deleted " + name); conn.commit()
+        flash(f"Deleted {name}.", "success")
+    return redirect(url_for("admin_problems"))
+
+
+@app.get("/problem/<code>/image/<name>")
+def problem_image(code, name):
+    me = current_user()
+    if not me:
+        return redirect(url_for("login", next=request.path))
+    if me["role"] not in ("participant", "judge", "admin"):
+        abort(403)
+    contest = active_contest()
+    if not contest or not IMAGE_NAME_RE.fullmatch(name):
+        abort(404)
+    staff = me["role"] in ("judge", "admin")
+    if not staff and problems_hidden_from_students(contest):
+        abort(404)
+    p = get_db().execute("SELECT * FROM problems WHERE contest_id=? AND code=?" + ("" if staff else " AND enabled=1"), (contest["id"], code.upper())).fetchone()
+    path = problem_images_dir(contest["id"], p["api_id"]) / name if p else None
+    mimetype = IMAGE_TYPES.get(path.suffix.lower().lstrip(".")) if path else None
+    if not p or not mimetype or not path.is_file():
+        abort(404)
+    resp = send_file(path, mimetype=mimetype, max_age=3600)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["Cache-Control"] = "private, max-age=3600"
+    return resp
+
+
+@app.route("/problem/<code>")
+@problem_reader_required
+def problem(code):
+    contest = active_contest()
+    staff = viewer_is_staff()
+    if not staff and problems_hidden_from_students(contest):
+        flash("The problems appear when the contest starts.", "info")
+        return redirect(url_for("dashboard"))
+    p = get_db().execute("SELECT * FROM problems WHERE contest_id=? AND code=?" + ("" if staff else " AND enabled=1"), (contest["id"], code.upper())).fetchone()
+    if not p:
+        abort(404)
+    return render_template("problem.html", p=p, image_names=list_problem_images(contest["id"], p["api_id"]), staff_view=staff)
 
 
 @app.route("/submit", methods=["GET", "POST"])
@@ -1204,6 +1749,9 @@ def submit():
         flash("Invalid problem or language. Use a supported source file or select a language.","danger"); return redirect(url_for("submit"))
     if not source.strip(): flash("Paste code or upload a source file.","danger"); return redirect(url_for("submit",problem=code))
     if len(source.encode("utf-8")) > p["code_limit_kb"]*1024: flash("Source code exceeds this problem's code limit.","danger"); return redirect(url_for("submit",problem=code))
+    max_waiting=int(os.environ.get("INQUISITOR_MAX_WAITING_SUBMISSIONS","3"))
+    if max_waiting>0 and conn.execute("SELECT COUNT(*) FROM submissions WHERE contest_id=? AND account_id=? AND status IN ('PENDING','JUDGING')",(contest["id"],me["id"])).fetchone()[0]>=max_waiting:
+        flash(f"You already have {max_waiting} submissions waiting to be judged. Wait for a verdict, then submit again.","danger"); return redirect(url_for("submit",problem=code))
     entry_point={"java":"Main","kotlin":"MainKt","python3":"main.py","ruby":"main.rb"}.get(language)
     detail=""
     if mismatch: detail=f"Language mismatch: form selected {selected_language}; file extension detected {language}. Inquisitor used the detected language."
@@ -1328,12 +1876,29 @@ def judge_console():
         "clarifications": conn.execute("SELECT COUNT(*) FROM clarifications WHERE contest_id=? AND status='OPEN'", (contest["id"],)).fetchone()[0],
         "submissions": conn.execute("SELECT COUNT(*) FROM submissions WHERE contest_id=?", (contest["id"],)).fetchone()[0],
     }
+    me = current_user(); cutoff = _claim_cutoff(); page_size = 40
+    show = request.args.get("show", "all"); prob = request.args.get("problem", "").strip().upper(); q = request.args.get("q", "").strip()
+    try: page = max(1, int(request.args.get("page", "1")))
+    except ValueError: page = 1
+    where = ["s.contest_id=?"]; args = [contest["id"]]
+    if show == "unreviewed": where.append("s.reviewed_at IS NULL AND s.status='DONE'")
+    elif show == "claimed": where.append("s.reviewed_at IS NULL AND s.claimed_by IS NOT NULL AND s.claimed_at>=?"); args.append(cutoff)
+    elif show == "mine": where.append("s.claimed_by=?"); args.append(me["id"])
+    elif show == "overridden": where.append("s.manual_override=1")
+    elif show == "pending": where.append("s.status!='DONE'")
+    elif show == "needs_feedback": where.append("s.status='DONE' AND s.verdict IS NOT NULL AND s.verdict!='AC' AND s.feedback=''")
+    else: show = "all"
+    if prob: where.append("p.code=?"); args.append(prob)
+    if q: where.append("(a.display_name LIKE ? OR a.username LIKE ?)"); args += [f"%{q}%", f"%{q}%"]
+    base = "FROM submissions s JOIN accounts a ON a.id=s.account_id JOIN problems p ON p.id=s.problem_id WHERE " + " AND ".join(where)
+    total_rows = conn.execute("SELECT COUNT(*) " + base, args).fetchone()[0]
     queue = conn.execute(
-        """SELECT s.*, a.display_name participant_name, p.code, p.title FROM submissions s
-           JOIN accounts a ON a.id=s.account_id JOIN problems p ON p.id=s.problem_id
-           WHERE s.contest_id=? ORDER BY CASE s.status WHEN 'JUDGING' THEN 0 WHEN 'PENDING' THEN 1 ELSE 2 END, s.id DESC LIMIT 60""",
-        (contest["id"],)
-    ).fetchall()
+        "SELECT s.*, a.display_name participant_name, p.code, p.title, (SELECT display_name FROM accounts WHERE id=s.claimed_by) claimed_by_name, "
+        "(SELECT display_name FROM accounts WHERE id=s.reviewed_by) reviewed_by_name " + base +
+        " ORDER BY CASE s.status WHEN 'JUDGING' THEN 0 WHEN 'PENDING' THEN 1 ELSE 2 END, s.id DESC LIMIT ? OFFSET ?",
+        args + [page_size, (page - 1) * page_size]).fetchall()
+    problem_codes = [r["code"] for r in conn.execute("SELECT code FROM problems WHERE contest_id=? ORDER BY ordinal,code", (contest["id"],))]
+    my_claim = active_claim(conn, me["id"])
     clar = conn.execute(
         """SELECT c.*, a.display_name participant_name, p.code FROM clarifications c
            JOIN accounts a ON a.id=c.account_id LEFT JOIN problems p ON p.id=c.problem_id
@@ -1346,7 +1911,7 @@ def judge_console():
            FROM registrations r JOIN accounts a ON a.id=r.account_id
            WHERE r.contest_id=? ORDER BY a.display_name""", (contest["id"],)
     ).fetchall()
-    return render_template("judge.html", stats=stats, queue=queue, clar=clar, participants=participants, judge_languages=LANGUAGES, judge_compiler_status=compiler_status())
+    return render_template("judge.html", stats=stats, queue=queue, cutoff=cutoff, my_claim=my_claim, show=show, prob=prob, q=q, page=page, pages=max(1, -(-total_rows // page_size)), total_rows=total_rows, problem_codes=problem_codes, clar=clar, participants=participants, judge_languages=LANGUAGES, judge_compiler_status=compiler_status())
 
 
 @app.post("/judge/clarification/<int:cid>/answer")
@@ -1384,38 +1949,201 @@ def judge_answer(cid):
 @fx._staff_permission("rejudge")
 def rejudge(sid):
     conn = get_db()
-    conn.execute("UPDATE submissions SET status='PENDING',verdict=NULL,runtime_ms=NULL,judging_started_at=NULL,judged_at=NULL,detail='Queued for rejudge.' WHERE id=?", (sid,))
+    conn.execute("UPDATE submissions SET status='PENDING',verdict=NULL,runtime_ms=NULL,judging_started_at=NULL,judged_at=NULL,detail='Queued for rejudge.',manual_override=0,auto_verdict=NULL WHERE id=?", (sid,))
+    fx.audit(conn, "judge.rejudge", contest_id=active_contest(conn)["id"], object_type="submission", object_id=str(sid), detail="Rejudge requested; any manual verdict on this submission was cleared.")
     conn.commit()
     flash(f"Submission #{sid} queued for rejudge.", "success")
     return redirect(url_for("judge_console"))
 
-@app.post("/judge/manual/<int:sid>")
+# ---- Manual code review -------------------------------------------------
+# Auto-judge decides the verdict from program output.  A judge may additionally review the source code:
+# claim one submission (locked to that judge, one active claim at a time), read it, record a note, and
+# optionally override the verdict.  A manual verdict is never overwritten by the auto-judge.
+REVIEW_VERDICTS = ("AC", "WA", "TLE", "RTE", "CE", "MLE", "OLE", "PE")
+
+
+def review_claim_minutes() -> int:
+    try:
+        return max(1, int(os.environ.get("INQUISITOR_REVIEW_CLAIM_MINUTES", "20")))
+    except ValueError:
+        return 20
+
+
+def _claim_cutoff() -> str:
+    return iso(utcnow() - timedelta(minutes=review_claim_minutes()))
+
+
+def active_claim(conn, account_id):
+    """The submission this judge is currently reviewing, or None (claims expire after a period of inactivity)."""
+    return conn.execute(
+        """SELECT s.*, p.code, a.display_name participant_name FROM submissions s
+           JOIN problems p ON p.id=s.problem_id JOIN accounts a ON a.id=s.account_id
+           WHERE s.claimed_by=? AND s.reviewed_at IS NULL AND s.claimed_at>=? ORDER BY s.claimed_at DESC LIMIT 1""",
+        (account_id, _claim_cutoff()),
+    ).fetchone()
+
+
+def _review_state(sub, cutoff):
+    if sub["reviewed_at"]:
+        return "REVIEWED"
+    if sub["claimed_by"] and sub["claimed_at"] and sub["claimed_at"] >= cutoff:
+        return "CLAIMED"
+    return "OPEN"
+
+
+@app.get("/judge/submission/<int:sid>")
 @fx._staff_permission("judge")
-def manual_judge(sid):
-    verdict = request.form.get("verdict", "").strip().upper()
-    detail = request.form.get("detail", "").strip()
-    runtime_raw = request.form.get("runtime_ms", "").strip()
-    allowed = {"AC","WA","TLE","RTE","CE","MLE","OLE","PE"}
-    if verdict not in allowed:
-        flash("Invalid manual verdict.", "danger")
-        return redirect(url_for("judge_console"))
-    runtime_ms = None
-    if runtime_raw:
-        try:
-            runtime_ms = max(0, int(runtime_raw))
-        except ValueError:
-            flash("Runtime must be a non-negative integer.", "danger")
-            return redirect(url_for("judge_console"))
-    conn = get_db()
+def review_submission(sid):
+    conn = get_db(); me = current_user()
+    sub = conn.execute(
+        """SELECT s.*, p.code, p.title, a.display_name participant_name, a.affiliation participant_affiliation,
+                  cb.display_name claimed_by_name, rb.display_name reviewed_by_name
+           FROM submissions s JOIN problems p ON p.id=s.problem_id JOIN accounts a ON a.id=s.account_id
+           LEFT JOIN accounts cb ON cb.id=s.claimed_by LEFT JOIN accounts rb ON rb.id=s.reviewed_by
+           WHERE s.id=?""", (sid,)).fetchone()
+    if not sub:
+        abort(404)
+    state = _review_state(sub, _claim_cutoff())
+    mine = state == "CLAIMED" and sub["claimed_by"] == me["id"]
+    if mine:  # reading the code counts as activity: keep the claim alive
+        conn.execute("UPDATE submissions SET claimed_at=? WHERE id=? AND claimed_by=? AND reviewed_at IS NULL", (iso(utcnow()), sid, me["id"]))
+        conn.commit()
+    other = active_claim(conn, me["id"])
+    return render_template("judge_review.html", sub=sub, state=state, mine=mine, my_other_claim=(other if other and other["id"] != sid else None),
+                           verdicts=REVIEW_VERDICTS, language=LANGUAGES.get(sub["language"]), claim_minutes=review_claim_minutes(), can_force=fx.staff_can("analytics"))
+
+
+@app.post("/judge/submission/<int:sid>/claim")
+@fx._staff_permission("judge")
+def review_claim(sid):
+    conn = get_db(); me = current_user(); now = iso(utcnow()); cutoff = _claim_cutoff()
     sub = conn.execute("SELECT * FROM submissions WHERE id=?", (sid,)).fetchone()
     if not sub:
         abort(404)
-    note = detail or f"Manual verdict applied by {current_user()['display_name']}"
-    now = iso(utcnow())
-    conn.execute("UPDATE submissions SET status='DONE', verdict=?, runtime_ms=?, judging_started_at=COALESCE(judging_started_at, ?), judged_at=?, detail=? WHERE id=?", (verdict, runtime_ms, now, now, note, sid))
-    conn.commit()
-    flash(f"Manual verdict {verdict} applied to submission #{sid}.", "success")
+    if sub["status"] != "DONE":
+        flash("This submission is still being auto-judged. Review it once a verdict is in.", "danger")
+        return redirect(url_for("review_submission", sid=sid))
+    # One atomic statement: the submission must be unreviewed and unclaimed (or its claim expired), and this judge
+    # must not hold another live claim.  Two judges clicking at once cannot both win.
+    cur = conn.execute(
+        """UPDATE submissions SET claimed_by=:me, claimed_at=:now
+           WHERE id=:sid AND reviewed_at IS NULL AND (claimed_by IS NULL OR claimed_by=:me OR claimed_at<:cutoff)
+             AND NOT EXISTS (SELECT 1 FROM submissions o WHERE o.claimed_by=:me AND o.reviewed_at IS NULL
+                             AND o.claimed_at>=:cutoff AND o.id!=:sid)""",
+        {"me": me["id"], "now": now, "sid": sid, "cutoff": cutoff})
+    if cur.rowcount == 1:
+        fx.audit(conn, "review.claim", contest_id=sub["contest_id"], object_type="submission", object_id=str(sid), detail=f"Claimed by {me['display_name']}")
+        conn.commit(); flash(f"You claimed submission #{sid}. It is locked to you until you finish or release it.", "success")
+    else:
+        conn.rollback()
+        fresh = conn.execute("SELECT s.*, a.display_name claimed_by_name FROM submissions s LEFT JOIN accounts a ON a.id=s.claimed_by WHERE s.id=?", (sid,)).fetchone()
+        mine = active_claim(conn, me["id"])
+        if fresh["reviewed_at"]:
+            flash("This submission has already been reviewed.", "danger")
+        elif mine and mine["id"] != sid:
+            flash(f"Finish or release submission #{mine['id']} before claiming another.", "danger")
+        else:
+            flash(f"Submission #{sid} is being reviewed by {fresh['claimed_by_name'] or 'another judge'}.", "danger")
+    return redirect(url_for("review_submission", sid=sid))
+
+
+@app.post("/judge/submission/<int:sid>/release")
+@fx._staff_permission("judge")
+def review_release(sid):
+    conn = get_db(); me = current_user()
+    sub = conn.execute("SELECT * FROM submissions WHERE id=?", (sid,)).fetchone()
+    if not sub:
+        abort(404)
+    forced = sub["claimed_by"] != me["id"]
+    if forced and not fx.staff_can("analytics"):
+        flash("Only the judge holding this claim, a Chief Judge or the Contest Director can release it.", "danger")
+        return redirect(url_for("review_submission", sid=sid))
+    cur = conn.execute("UPDATE submissions SET claimed_by=NULL, claimed_at=NULL WHERE id=? AND reviewed_at IS NULL", (sid,))
+    if cur.rowcount == 1:
+        fx.audit(conn, "review.release", contest_id=sub["contest_id"], object_type="submission", object_id=str(sid), detail=("Force-released by " if forced else "Released by ") + me["display_name"])
+        conn.commit(); flash(f"Submission #{sid} released.", "success")
     return redirect(url_for("judge_console"))
+
+
+FEEDBACK_MIN_CHARS = 10
+
+
+@app.post("/judge/submission/<int:sid>/feedback")
+@fx._staff_permission("judge")
+def review_feedback_edit(sid):
+    """Change the feedback of a submission that was already reviewed (the reviewing judge, or a director)."""
+    conn = get_db(); me = current_user()
+    sub = conn.execute("SELECT * FROM submissions WHERE id=?", (sid,)).fetchone()
+    if not sub: abort(404)
+    if not (sub["reviewed_by"] == me["id"] or me["role"] == "admin" or fx.staff_can("analytics")):
+        abort(403)
+    feedback = request.form.get("feedback", "").strip()
+    if sub["verdict"] != "AC" and len(feedback) < FEEDBACK_MIN_CHARS:
+        flash(f"Feedback is required when the verdict is not Accepted (at least {FEEDBACK_MIN_CHARS} characters).", "danger"); return redirect(url_for("review_submission", sid=sid))
+    if len(feedback) > 2000:
+        flash("Feedback is too long (2000 characters at most).", "danger"); return redirect(url_for("review_submission", sid=sid))
+    conn.execute("UPDATE submissions SET feedback=?, feedback_by=?, feedback_at=? WHERE id=?", (feedback, me["id"] if feedback else None, iso(utcnow()) if feedback else None, sid))
+    fx.audit(conn, "review.feedback", contest_id=sub["contest_id"], object_type="submission", object_id=str(sid), detail=feedback[:200] or "Feedback removed.")
+    conn.commit(); flash("Feedback saved.", "success")
+    return redirect(url_for("review_submission", sid=sid))
+
+
+@app.post("/judge/submission/<int:sid>/review")
+@fx._staff_permission("judge")
+def review_complete(sid):
+    conn = get_db(); me = current_user()
+    note = request.form.get("note", "").strip(); verdict = request.form.get("verdict", "").strip().upper(); runtime_raw = request.form.get("runtime_ms", "").strip()
+    sub = conn.execute("SELECT * FROM submissions WHERE id=?", (sid,)).fetchone()
+    if not sub:
+        abort(404)
+    if sub["claimed_by"] != me["id"] or sub["reviewed_at"]:
+        flash("Claim this submission before reviewing it.", "danger")
+        return redirect(url_for("review_submission", sid=sid))
+    if verdict and verdict not in REVIEW_VERDICTS:
+        flash("Invalid verdict.", "danger"); return redirect(url_for("review_submission", sid=sid))
+    overriding = bool(verdict) and verdict != sub["verdict"]
+    feedback = request.form.get("feedback", "").strip()
+    final_verdict = verdict if overriding else sub["verdict"]
+    if final_verdict != "AC" and len(feedback) < FEEDBACK_MIN_CHARS:
+        flash(f"Tell the contestant what went wrong: feedback is required when the verdict is not Accepted (at least {FEEDBACK_MIN_CHARS} characters).", "danger")
+        return redirect(url_for("review_submission", sid=sid))
+    if len(feedback) > 2000:
+        flash("Feedback is too long (2000 characters at most).", "danger"); return redirect(url_for("review_submission", sid=sid))
+    if overriding and not note:
+        flash("Add a note explaining why you are overriding the auto-judge verdict.", "danger"); return redirect(url_for("review_submission", sid=sid))
+    runtime_ms = sub["runtime_ms"]
+    if overriding and runtime_raw:
+        try: runtime_ms = max(0, int(runtime_raw))
+        except ValueError: flash("Runtime must be a non-negative integer.", "danger"); return redirect(url_for("review_submission", sid=sid))
+    now = iso(utcnow())
+    if overriding:
+        detail = f"Manual verdict by {me['display_name']}: {note}"
+        cur = conn.execute(
+            """UPDATE submissions SET verdict=?, auto_verdict=COALESCE(auto_verdict, verdict), manual_override=1, runtime_ms=?, detail=?,
+                      reviewed_by=?, reviewed_at=?, review_note=?, feedback=?, feedback_by=?, feedback_at=? WHERE id=? AND claimed_by=? AND reviewed_at IS NULL""",
+            (verdict, runtime_ms, detail, me["id"], now, note, feedback, me["id"] if feedback else None, now if feedback else None, sid, me["id"]))
+    else:
+        cur = conn.execute("UPDATE submissions SET reviewed_by=?, reviewed_at=?, review_note=?, feedback=?, feedback_by=?, feedback_at=? WHERE id=? AND claimed_by=? AND reviewed_at IS NULL",
+                           (me["id"], now, note, feedback, me["id"] if feedback else None, now if feedback else None, sid, me["id"]))
+    if cur.rowcount != 1:
+        conn.rollback(); flash("This review could not be saved (the claim changed). Reload and try again.", "danger"); return redirect(url_for("review_submission", sid=sid))
+    if overriding:
+        done = conn.execute("SELECT * FROM submissions WHERE id=?", (sid,)).fetchone()
+        problem = conn.execute("SELECT * FROM problems WHERE id=?", (sub["problem_id"],)).fetchone()
+        append_event(conn, sub["contest_id"], "judgements", f"j-{sid}", api_judgement(done)); fx.on_judgement(conn, done, problem)
+    fx.audit(conn, "review.override" if overriding else "review.complete", contest_id=sub["contest_id"], object_type="submission", object_id=str(sid),
+             detail=(f"{sub['verdict']} -> {verdict}. " if overriding else "Code reviewed, verdict kept. ") + (note or "No note."))
+    conn.commit()
+    flash(f"Verdict changed to {verdict} and review saved." if overriding else "Review saved. The auto-judge verdict stands.", "success")
+    return redirect(url_for("judge_console"))
+
+
+@app.post("/judge/manual/<int:sid>")
+@fx._staff_permission("judge")
+def manual_judge(sid):
+    # Retired: verdict changes now go through the claim -> review flow so they are locked to one judge and audited.
+    flash("Open the submission and claim it to review the code or change its verdict.", "danger")
+    return redirect(url_for("review_submission", sid=sid))
 
 
 @app.post("/judge/rejudge-all")
@@ -1423,9 +2151,11 @@ def manual_judge(sid):
 def rejudge_all():
     contest = active_contest()
     conn = get_db()
-    conn.execute("UPDATE submissions SET status='PENDING',verdict=NULL,runtime_ms=NULL,judging_started_at=NULL,judged_at=NULL,detail='Queued for rejudge.' WHERE contest_id=?", (contest["id"],))
+    cur = conn.execute("UPDATE submissions SET status='PENDING',verdict=NULL,runtime_ms=NULL,judging_started_at=NULL,judged_at=NULL,detail='Queued for rejudge.' WHERE contest_id=? AND manual_override=0", (contest["id"],))
+    kept = conn.execute("SELECT COUNT(*) FROM submissions WHERE contest_id=? AND manual_override=1", (contest["id"],)).fetchone()[0]
+    fx.audit(conn, "judge.rejudge_all", contest_id=contest["id"], object_type="contest", object_id=contest["id"], detail=f"{cur.rowcount} queued; {kept} manual verdict(s) kept.")
     conn.commit()
-    flash("All submissions in the active contest were queued for rejudge.", "success")
+    flash(f"All auto-judged submissions were queued for rejudge. {kept} manually-overridden verdict(s) were kept.", "success")
     return redirect(url_for("judge_console"))
 
 
@@ -1504,6 +2234,17 @@ def admin_contests():
             reg_end = local_input_to_utc(request.form.get("registration_end", "").strip()) if request.form.get("registration_end", "").strip() else None
             make_active = request.form.get("make_active") == "on"
             max_team_size = max(1, min(20, int(request.form.get("max_team_size", "3"))))
+            # Staff lists (ADNU emails): one box per role; first role wins if an email is listed twice.
+            staff_entries: dict[str, str] = {}
+            for field, role in (("staff_chief_judges", "chief_judge"), ("staff_judges", "judge"), ("staff_problem_setters", "problem_setter"), ("staff_registration", "registration_staff")):
+                for email in fx.parse_email_list(request.form.get(field, "")):
+                    staff_entries.setdefault(email, role)
+            allowed_domains = (google_login_config() or {}).get("domains") or ["adnu.edu.ph", "gbox.adnu.edu.ph"]
+            bad_emails = [e for e in staff_entries if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", e) or e.rpartition("@")[2] not in allowed_domains]
+            if bad_emails:
+                raise ValueError("These are not ADNU email addresses (" + ", ".join("@" + d for d in allowed_domains) + "): " + ", ".join(bad_emails[:8]) + ". Nothing was saved.")
+            open_entry = 1 if request.form.get("open_entry") == "on" else 0
+            allowed_emails = parse_allowed_emails(request.form.get("allowed_emails", ""), bool(open_entry))
             if make_active:
                 conn.execute("UPDATE contests SET active=0")
             conn.execute(
@@ -1523,11 +2264,16 @@ def admin_contests():
                  request.form.get("registration_instruction","").strip())
             )
             conn.execute("UPDATE contests SET rules_text=?,organizer_text=? WHERE id=?",(request.form.get("rules_text","").strip(),request.form.get("organizer_text","TACTICS x Department of Computer Science, Ateneo de Naga University").strip(),cid))
+            conn.execute("UPDATE contests SET allowed_emails=?, open_entry=? WHERE id=?", (allowed_emails, open_entry, cid))
             contest = contest_by_id(cid, conn)
             append_event(conn, cid, "contest", None, api_contest(contest))
             fx.audit(conn,"contest.create",contest_id=cid,object_type="contest",object_id=cid,detail=name)
+            staff_done = {"created": 0, "updated": 0, "director": 0}
+            for email, role in staff_entries.items():
+                staff_done[fx.whitelist_staff(conn, sys.modules[__name__], cid, email, role)] += 1
             conn.commit()
-            flash(f"Contest '{name}' created.", "success")
+            extra = f" {len(staff_entries) - staff_done['director']} staff added by email." if staff_entries else ""
+            flash(f"Contest '{name}' created.{extra}", "success")
             return redirect(url_for("admin_contests"))
         except (ValueError, sqlite3.IntegrityError) as exc:
             conn.rollback(); flash(str(exc), "danger")
@@ -1567,10 +2313,25 @@ def admin_update_contest(cid):
         conn.execute("""UPDATE contests SET name=?,formal_name=?,location=?,start_at=?,duration_minutes=?,freeze_minutes=?,penalty_minutes=?,competition_mode=?,signup_open=?,projector_autoscroll=?,scope=?,scoring_model=?,lifecycle_phase=?,registration_start=?,registration_end=?,eligibility_note=?,allowed_departments=?,allowed_colleges=?,allowed_institutions=?,allowed_year_levels=?,max_team_size=?,requires_approval=?,require_checkin=?,custom_scoring_note=?,submissions_open=?,practice_mode=?,registration_instruction=? WHERE id=?""",
             (name,formal,location,start_at,duration,freeze,penalty,competition_mode,1 if request.form.get("signup_open")=="on" else 0,1 if request.form.get("projector_autoscroll")=="on" else 0,scope,scoring,phase,reg_start,reg_end,request.form.get("eligibility_note",c["eligibility_note"]).strip(),request.form.get("allowed_departments",c["allowed_departments"]).strip(),request.form.get("allowed_colleges",c["allowed_colleges"]).strip(),request.form.get("allowed_institutions",c["allowed_institutions"]).strip(),request.form.get("allowed_year_levels",c["allowed_year_levels"]).strip(),max(1,min(20,int(request.form.get("max_team_size",c["max_team_size"])))),1 if request.form.get("requires_approval")=="on" else 0,1 if request.form.get("require_checkin")=="on" else 0,request.form.get("custom_scoring_note",c["custom_scoring_note"]).strip(),1 if request.form.get("submissions_open")=="on" else 0,1 if phase=="practice" else 0,request.form.get("registration_instruction",c["registration_instruction"]).strip(),cid))
         conn.execute("UPDATE contests SET rules_text=?,organizer_text=? WHERE id=?",(request.form.get("rules_text",c["rules_text"]).strip(),request.form.get("organizer_text",c["organizer_text"]).strip(),cid))
+        open_entry = 1 if request.form.get("open_entry") == "on" else 0
+        if "allowed_emails" in request.form or "open_entry" in request.form or "signup_open" in request.form:
+            list_raw = request.form.get("allowed_emails", c["allowed_emails"])
+            conn.execute("UPDATE contests SET allowed_emails=?, open_entry=? WHERE id=?", (parse_allowed_emails(list_raw, bool(open_entry)), open_entry, cid))
         updated=contest_by_id(cid,conn); append_event(conn,cid,"contest",None,api_contest(updated)); fx.audit(conn,"contest.update",contest_id=cid,object_type="contest",object_id=cid,detail=name); conn.commit(); flash("Contest settings updated.","success")
     except (ValueError,sqlite3.IntegrityError) as exc:
         conn.rollback(); flash(str(exc),"danger")
     return redirect(url_for("admin_contests"))
+
+def _read_number(label, raw, low, high, unit="", cast=int):
+    """A form number that must be inside a range. Says exactly what is wrong instead of quietly changing the value."""
+    try:
+        value = cast(str(raw).strip())
+    except (TypeError, ValueError):
+        raise ValueError(f"{label} must be a number{' in ' + unit if unit else ''} (you entered '{str(raw).strip()[:20]}').")
+    if not low <= value <= high:
+        raise ValueError(f"{label} must be between {low} and {high}{' ' + unit if unit else ''} (you entered {value}).")
+    return value
+
 
 @app.route("/admin/problems", methods=["GET", "POST"])
 @fx._staff_permission("problems")
@@ -1583,9 +2344,9 @@ def admin_problems():
             if not ID_RE.fullmatch(api_id): raise ValueError("Problem API ID is invalid.")
             if not code or len(code)>8: raise ValueError("Problem label/code is required and must be short.")
             if not title or not statement: raise ValueError("Title and statement are required.")
-            ordinal=int(request.form.get("ordinal","1")); time_limit_ms=max(100,min(60000,int(request.form.get("time_limit_ms","2000")))); memory_limit_mb=max(16,min(16384,int(request.form.get("memory_limit_mb","256"))))
+            ordinal=_read_number("Order",request.form.get("ordinal","1"),0,9999); time_limit_ms=_read_number("Time limit",request.form.get("time_limit_ms","2000"),100,60000,"ms"); memory_limit_mb=_read_number("Memory limit",request.form.get("memory_limit_mb","256"),16,16384,"MB")
             difficulty=request.form.get("difficulty","Medium"); difficulty=difficulty if difficulty in {"Easy","Medium","Hard","Expert"} else "Medium"
-            tags=request.form.get("tags","").strip(); source_name=request.form.get("source","").strip(); internal_notes=request.form.get("internal_notes","").strip(); points=max(0,float(request.form.get("points","100"))); enabled=1 if request.form.get("enabled","on")=="on" else 0
+            tags=request.form.get("tags","").strip(); source_name=request.form.get("source","").strip(); internal_notes=request.form.get("internal_notes","").strip(); points=_read_number("Points",request.form.get("points","100"),0,100000,"",float); enabled=1 if request.form.get("enabled","on")=="on" else 0
             reference_solution=request.form.get("reference_solution",""); reference_language=request.form.get("reference_language","") if reference_solution.strip() else ""; validator_source=request.form.get("validator_source","")
             if reference_language and reference_language not in LANGUAGES: raise ValueError("Reference solution language is unsupported.")
             sample_input=request.form.get("sample_input",""); sample_output=request.form.get("sample_output","")
@@ -1601,7 +2362,8 @@ def admin_problems():
             conn.rollback(); flash(str(exc),"danger")
     problems=contest_problems(contest["id"],conn)
     validations={r["problem_id"]:r for r in conn.execute("SELECT pv.* FROM problem_validations pv JOIN (SELECT problem_id,MAX(id) mid FROM problem_validations GROUP BY problem_id) x ON x.mid=pv.id").fetchall()}
-    return render_template("admin_problems.html",problems=problems,count_tests=count_tests,validations=validations)
+    problem_images = {row["id"]: list_problem_images(row["contest_id"], row["api_id"]) for row in problems}
+    return render_template("admin_problems.html",problems=problems,count_tests=count_tests,validations=validations,problem_images=problem_images)
 
 
 @app.post("/admin/problems/<int:pid>/update")
@@ -1612,7 +2374,7 @@ def admin_update_problem(pid):
     try:
         title=request.form.get("title",p["title"]).strip() or p["title"]; statement=request.form.get("statement",p["statement"]).strip() or p["statement"]; contributors=request.form.get("contributors",p["contributors"]).strip(); color=request.form.get("color",p["color"]).strip()
         if not HEX_COLOR_RE.fullmatch(color): raise ValueError("Problem color must be a six-digit hex color.")
-        sample_input=request.form.get("sample_input",p["sample_input"]); sample_output=request.form.get("sample_output",p["sample_output"]); time_limit_ms=max(100,min(60000,int(request.form.get("time_limit_ms",p["time_limit_ms"])))); memory_limit_mb=max(16,min(16384,int(request.form.get("memory_limit_mb",p["memory_limit_mb"])))); ordinal=int(request.form.get("ordinal",p["ordinal"])); difficulty=request.form.get("difficulty",p["difficulty"]); tags=request.form.get("tags",p["tags"]).strip(); source_name=request.form.get("source",p["source"]).strip(); internal_notes=request.form.get("internal_notes",p["internal_notes"]).strip(); points=max(0,float(request.form.get("points",p["points"]))); enabled=1 if request.form.get("enabled")=="on" else 0; reference_solution=request.form.get("reference_solution",p["reference_solution"]); reference_language=request.form.get("reference_language",p["reference_language"]); validator_source=request.form.get("validator_source",p["validator_source"])
+        sample_input=request.form.get("sample_input",p["sample_input"]); sample_output=request.form.get("sample_output",p["sample_output"]); time_limit_ms=_read_number("Time limit",request.form.get("time_limit_ms",p["time_limit_ms"]),100,60000,"ms"); memory_limit_mb=_read_number("Memory limit",request.form.get("memory_limit_mb",p["memory_limit_mb"]),16,16384,"MB"); ordinal=_read_number("Order",request.form.get("ordinal",p["ordinal"]),0,9999); difficulty=request.form.get("difficulty",p["difficulty"]); tags=request.form.get("tags",p["tags"]).strip(); source_name=request.form.get("source",p["source"]).strip(); internal_notes=request.form.get("internal_notes",p["internal_notes"]).strip(); points=_read_number("Points",request.form.get("points",p["points"]),0,100000,"",float); enabled=1 if request.form.get("enabled")=="on" else 0; reference_solution=request.form.get("reference_solution",p["reference_solution"]); reference_language=request.form.get("reference_language",p["reference_language"]); validator_source=request.form.get("validator_source",p["validator_source"])
         if reference_language and reference_language not in LANGUAGES: raise ValueError("Reference solution language is unsupported.")
         conn.execute("""UPDATE problems SET title=?,statement=?,contributors=?,color=?,sample_input=?,sample_output=?,time_limit_ms=?,memory_limit_mb=?,ordinal=?,difficulty=?,tags=?,source=?,internal_notes=?,points=?,enabled=?,reference_solution=?,reference_language=?,validator_source=? WHERE id=?""",(title,statement,contributors,color.lower(),sample_input,sample_output,time_limit_ms,memory_limit_mb,ordinal,difficulty,tags,source_name,internal_notes,points,enabled,reference_solution,reference_language,validator_source,pid))
         tests=request.files.get("tests_zip")
@@ -1646,9 +2408,11 @@ def admin_participants():
     if request.method=="POST":
         try:
             username=request.form.get("username","").strip().lower(); email=request.form.get("email","").strip().lower(); password=request.form.get("password","").strip(); display_name=request.form.get("display_name","").strip(); affiliation=request.form.get("affiliation","").strip(); department=request.form.get("department","").strip(); college=request.form.get("college","").strip(); year_level=request.form.get("year_level","").strip(); team_name=request.form.get("team_name","").strip() if contest["competition_mode"]=="team" else ""
-            if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{2,31}",username): raise ValueError("Username must be 3-32 characters using lowercase letters, numbers, ., _, or -.")
             if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",email): raise ValueError("Enter a valid email address.")
-            if len(password)<6: raise ValueError("Initial password must contain at least 6 characters.")
+            if not username and email: username=_unique_username(conn,email)   # signing in with Google: the email is enough
+            if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{2,31}",username): raise ValueError("Enter the student's ADNU email, or a username of 3-32 characters (lowercase letters, numbers, ., _ or -).")
+            if not password and email and google_login_config(): password=""
+            elif len(password)<6: raise ValueError("Initial password must contain at least 6 characters (or leave it empty and give an ADNU email so they sign in with Google).")
             if not display_name: raise ValueError("Participant name is required.")
             if not department: raise ValueError("Department / program is required.")
             if team_name:
@@ -1657,7 +2421,7 @@ def admin_participants():
             iid=None
             if affiliation:
                 inst=conn.execute("SELECT id FROM institutions WHERE lower(name)=lower(?) OR lower(short_name)=lower(?)",(affiliation,affiliation)).fetchone(); iid=inst["id"] if inst else None
-            cur=conn.execute("INSERT INTO accounts(username,email,password_hash,display_name,affiliation,department,college,year_level,institution_id,role,created_at) VALUES(?,?,?,?,?,?,?,?,?, 'participant', ?)",(username,email,generate_password_hash(password),display_name,affiliation,department,college,year_level,iid,iso(utcnow()))); aid=cur.lastrowid
+            cur=conn.execute("INSERT INTO accounts(username,email,password_hash,display_name,affiliation,department,college,year_level,institution_id,role,created_at) VALUES(?,?,?,?,?,?,?,?,?, 'participant', ?)",(username,email,(generate_password_hash(password) if password else fx.unusable_password_hash()),display_name,affiliation,department,college,year_level,iid,iso(utcnow()))); aid=cur.lastrowid
             conn.execute("INSERT INTO registrations(contest_id,account_id,team_api_id,team_name,approval_status,registration_status,seat,workstation,coach_name,adviser_name,temporary_password) VALUES(?,?,?,?,?,?,?,?,?,?,1)",(contest["id"],aid,f"p-{aid}",team_name,"APPROVED","REGISTERED",request.form.get("seat","").strip(),request.form.get("workstation","").strip(),request.form.get("coach_name","").strip(),request.form.get("adviser_name","").strip()))
             fx.audit(conn,"participant.create",contest_id=contest["id"],object_type="account",object_id=aid,detail=display_name); conn.commit(); flash("Participant account created and registered.","success"); return redirect(url_for("admin_participants"))
         except sqlite3.IntegrityError:
@@ -1689,12 +2453,47 @@ def admin_toggle_registration(aid):
             flash("Cannot unregister a participant who already has submissions.", "danger")
         else:
             conn.execute("DELETE FROM registrations WHERE contest_id=? AND account_id=?", (contest["id"], aid))
+            fx.audit(conn, "participant.unregister", contest_id=contest["id"], object_type="account", object_id=aid, detail=acct["display_name"])
             conn.commit()
             flash("Participant unregistered from active contest.", "success")
     else:
         conn.execute("INSERT INTO registrations(contest_id,account_id,team_api_id) VALUES(?,?,?)", (contest["id"], aid, f"p-{aid}"))
+        fx.audit(conn, "participant.register", contest_id=contest["id"], object_type="account", object_id=aid, detail=acct["display_name"])
         conn.commit()
         flash("Participant registered for active contest.", "success")
+    return redirect(url_for("admin_participants"))
+
+
+@app.post("/admin/participants/bulk")
+@fx._staff_permission("participants")
+def admin_bulk_registration():
+    """Register or unregister many contestants of the active contest at once. Anyone who already has submissions is always kept."""
+    conn = get_db(); contest = active_contest(conn)
+    action = request.form.get("action", "")
+    if action not in {"unregister_selected", "register_selected", "unregister_unsubmitted"}:
+        abort(400)
+    if action == "unregister_unsubmitted":
+        ids = [r["account_id"] for r in conn.execute("SELECT account_id FROM registrations WHERE contest_id=?", (contest["id"],))]
+    else:
+        try: ids = sorted({int(x) for x in request.form.getlist("ids")})
+        except ValueError: abort(400)
+    if not ids:
+        flash("Select at least one contestant first.", "danger"); return redirect(url_for("admin_participants"))
+    changed, kept = 0, 0
+    for aid in ids:
+        acct = conn.execute("SELECT id FROM accounts WHERE id=? AND role='participant'", (aid,)).fetchone()
+        if not acct: continue
+        registered = participant_registered(contest["id"], aid, conn)
+        if action == "register_selected":
+            if not registered:
+                conn.execute("INSERT INTO registrations(contest_id,account_id,team_api_id) VALUES(?,?,?)", (contest["id"], aid, f"p-{aid}")); changed += 1
+        elif registered:
+            if conn.execute("SELECT 1 FROM submissions WHERE contest_id=? AND account_id=? LIMIT 1", (contest["id"], aid)).fetchone(): kept += 1
+            else: conn.execute("DELETE FROM registrations WHERE contest_id=? AND account_id=?", (contest["id"], aid)); changed += 1
+    word = "registered" if action == "register_selected" else "unregistered"
+    fx.audit(conn, "participant.bulk_" + word, contest_id=contest["id"], object_type="contest", object_id=contest["id"], detail=f"{changed} {word}" + (f", {kept} kept because they already have submissions" if kept else ""))
+    conn.commit()
+    flash(f"{changed} contestant(s) {word}." + (f" {kept} kept because they already have submissions." if kept else ""), "success")
     return redirect(url_for("admin_participants"))
 
 
@@ -1707,9 +2506,10 @@ def admin_update_participant_profile(aid):
     username=request.form.get("username",acct["username"]).strip().lower()
     email=request.form.get("email",acct["email"] or "").strip().lower()
     department=request.form.get("department",acct["department"]).strip(); affiliation=request.form.get("affiliation",acct["affiliation"]).strip(); college=request.form.get("college",acct["college"]).strip(); year_level=request.form.get("year_level",acct["year_level"]).strip()
-    if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{2,31}",username): flash("Username must be 3-32 characters using lowercase letters, numbers, ., _, or -.","danger"); return redirect(url_for("admin_participants"))
-    if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",email): flash("Enter a valid email address.","danger"); return redirect(url_for("admin_participants"))
-    if not department: flash("Department / program is required.","danger"); return redirect(url_for("admin_participants"))
+    username=re.sub(r"[^a-z0-9_.-]+",".",username).strip("._-")[:32]   # commas, spaces and capitals are tidied instead of rejected
+    email=email.strip(" ,;")
+    if username!=acct["username"] and not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{1,31}",username): flash(f"Username must be 2-32 characters using lowercase letters, numbers, ., _, or - (got '{username}').","danger"); return redirect(url_for("admin_participants"))
+    if email and not re.fullmatch(r"[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+",email): flash(f"'{email}' is not a valid email address (one address only, no commas).","danger"); return redirect(url_for("admin_participants"))
     iid=None
     if affiliation:
         inst=conn.execute("SELECT id FROM institutions WHERE lower(name)=lower(?) OR lower(short_name)=lower(?)",(affiliation,affiliation)).fetchone(); iid=inst["id"] if inst else None
@@ -2136,16 +2936,23 @@ def api_language_one(cid, lid):
     return jsonify(api_language(lid))
 
 
+def _api_problems_hidden(contest) -> bool:
+    me = current_user()
+    return bool(contest) and problems_hidden_from_students(contest) and not (me and me["role"] in ("judge", "admin"))
+
+
 @app.get("/api/contests/<cid>/problems")
 def api_problems(cid):
-    if not contest_by_id(cid): return api_error(404, "Contest not found")
+    c = contest_by_id(cid)
+    if not c: return api_error(404, "Contest not found")
+    if _api_problems_hidden(c): return jsonify([])
     return jsonify([api_problem(p) for p in contest_problems(cid)])
 
 
 @app.get("/api/contests/<cid>/problems/<pid>")
 def api_problem_one(cid, pid):
     p = get_db().execute("SELECT * FROM problems WHERE contest_id=? AND api_id=?", (cid,pid)).fetchone()
-    if not p: return api_error(404, "Problem not found")
+    if not p or _api_problems_hidden(contest_by_id(cid)): return api_error(404, "Problem not found")
     return jsonify(api_problem(p))
 
 
@@ -2442,6 +3249,7 @@ def api_scoreboard(cid):
     if not c:return api_error(404,"Contest not found")
     st=contest_state(c); frozen=st["phase"] in {"FROZEN","ENDED"} and not st["revealed"]
     rows, probs=standings(c, st["freeze_at"] if frozen else None)
+    if _api_problems_hidden(c): probs=[]   # problem ids are made from the titles: keep them back until the contest starts
     start, end, _=contest_times(c); now=utcnow(); contest_seconds=(min(now,end)-start).total_seconds() if start and end else 0
     out=[]
     for r in rows:
@@ -2491,20 +3299,26 @@ def judging_worker():
         try:
             conn = db_connect()
             sub = conn.execute(
-                """SELECT s.*, p.api_id, p.time_limit_ms, p.memory_limit_mb FROM submissions s JOIN problems p ON p.id=s.problem_id
+                """SELECT s.*, p.api_id, p.time_limit_ms, p.memory_limit_mb, p.output_limit_mb FROM submissions s JOIN problems p ON p.id=s.problem_id
                    WHERE s.status='PENDING' ORDER BY s.id LIMIT 1"""
             ).fetchone()
             if not sub:
-                time.sleep(0.5); continue
+                diagnostics.heartbeat(sys.modules[__name__], conn, "idle"); time.sleep(0.5); continue
+            diagnostics.heartbeat(sys.modules[__name__], conn, f"judging #{sub['id']}")
             started=iso(utcnow())
             claimed=conn.execute("UPDATE submissions SET status='JUDGING',judging_started_at=?,detail='Running on Inquisitor judge worker.' WHERE id=? AND status='PENDING'",(started,sub["id"]))
             conn.commit()
             if claimed.rowcount != 1: continue
             fresh=conn.execute("SELECT * FROM submissions WHERE id=?",(sub["id"],)).fetchone()
             if not fresh or fresh["status"]!="JUDGING": continue
-            result=judge_submission(language=sub["language"],source=sub["source"],tests_dir=PROBLEMS_DIR/sub["contest_id"]/sub["api_id"]/"tests",time_limit_ms=sub["time_limit_ms"],memory_limit_mb=sub["memory_limit_mb"])
+            result=judge_submission(language=sub["language"],source=sub["source"],tests_dir=PROBLEMS_DIR/sub["contest_id"]/sub["api_id"]/"tests",time_limit_ms=sub["time_limit_ms"],memory_limit_mb=sub["memory_limit_mb"],output_limit_mb=sub["output_limit_mb"])
             judged=iso(utcnow())
-            conn.execute("UPDATE submissions SET status='DONE',verdict=?,runtime_ms=?,detail=?,judged_at=? WHERE id=?",(result["verdict"],result["runtime_ms"],result["detail"],judged,sub["id"]))
+            # Only write the result if the submission is still ours: a rejudge request or a judge's manual
+            # verdict that landed while this ran must not be overwritten by a stale auto result.
+            wrote=conn.execute("UPDATE submissions SET status='DONE',verdict=?,runtime_ms=?,detail=?,judged_at=? WHERE id=? AND status='JUDGING' AND manual_override=0",(result["verdict"],result["runtime_ms"],result["detail"],judged,sub["id"]))
+            if wrote.rowcount!=1:
+                conn.commit(); continue
+            diagnostics.heartbeat(sys.modules[__name__], conn, "idle", judged_inc=1)
             contest=contest_by_id(sub["contest_id"],conn); done=conn.execute("SELECT * FROM submissions WHERE id=?",(sub["id"],)).fetchone()
             append_event(conn,sub["contest_id"],"judgements",f"j-{sub['id']}",api_judgement(done)); problem=conn.execute("SELECT * FROM problems WHERE id=?",(sub["problem_id"],)).fetchone(); fx.on_judgement(conn,done,problem); conn.commit()
         except Exception as exc:
@@ -2514,8 +3328,25 @@ def judging_worker():
             if conn: conn.close()
 
 
+def judge_worker_count() -> int:
+    """Number of parallel auto-judge threads (INQUISITOR_JUDGE_WORKERS). Each runs one Docker judge container at a time."""
+    default = 3 if judge_backend() == "docker" else 1
+    try:
+        return max(1, min(16, int(os.environ.get("INQUISITOR_JUDGE_WORKERS", default))))
+    except ValueError:
+        return default
+
+
 def start_worker():
-    threading.Thread(target=judging_worker,name="inquisitor-judge",daemon=True).start()
+    # A crash mid-judging leaves rows stuck in JUDGING; put them back in the queue.
+    conn = db_connect()
+    try:
+        conn.execute("UPDATE submissions SET status='PENDING' WHERE status='JUDGING'"); conn.commit()
+    finally:
+        conn.close()
+    # Submissions are claimed with an atomic UPDATE ... WHERE status='PENDING', so threads never judge the same one twice.
+    for n in range(judge_worker_count()):
+        threading.Thread(target=judging_worker,name=f"inquisitor-judge-{n+1}",daemon=True).start()
 
 
 if __name__ == "__main__":

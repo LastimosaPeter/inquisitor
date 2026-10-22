@@ -11,8 +11,8 @@
       <div class="form-row"><label>Department / program<input name="department" placeholder="Department of Computer Science" required></label><label>College<input name="college" placeholder="College of Computer Studies"></label></div>
       <div class="form-row"><label>School / affiliation<input name="affiliation" value="Ateneo de Naga University"></label><label>Year level<input name="year_level" placeholder="3rd Year"></label></div>
       {% if contest['competition_mode']=='team' %}<label>Team name<input name="team_name" placeholder="Team Nebula"><small class="muted">Maximum {{ contest['max_team_size'] }} members per team.</small></label>{% endif %}
-      <div class="form-row"><label>Username<input name="username" required><small class="muted">Used for sign-in now.</small></label><label>Email <small class="muted">Optional; may be used as the ADNU account sign-in later.</small><input type="email" name="email" placeholder="name@adnu.edu.ph"></label></div>
-      <label>Initial password<input name="password" type="password" minlength="6" required></label>
+      <div class="form-row"><label>Username<input name="username"><small class="muted">Optional when you give an ADNU email.</small></label><label>Email <small class="muted">Optional; may be used as the ADNU account sign-in later.</small><input type="email" name="email" placeholder="name@adnu.edu.ph"></label></div>
+      <label>Initial password<input name="password" type="password" minlength="6"><small class="muted">Leave empty for students who sign in with Google.</small></label>
       <details class="form-section"><summary>Venue and support details</summary><div class="form-stack top-gap"><div class="form-row"><label>Seat<input name="seat" placeholder="Lab A · Seat 17"></label><label>Workstation<input name="workstation" placeholder="PC-17"></label></div><div class="form-row"><label>Coach<input name="coach_name"></label><label>Adviser<input name="adviser_name"></label></div></div></details>
       <button class="button" type="submit">Create and register</button>
     </form>
@@ -23,10 +23,20 @@
 
 <section class="card people-list-card">
   <div class="card-head"><div><span class="eyebrow">{{ contest['name'] }}</span><h2>Contestants & check-in</h2></div><span class="badge neutral">{{ participants|length }}</span></div>
+  <form method="post" action="{{ url_for('admin_bulk_registration') }}" id="bulk-form" class="bulk-bar">
+    <span class="muted">Several at once:</span>
+    <button type="button" class="tiny" data-select="all">Select all</button>
+    <button type="button" class="tiny" data-select="registered">Select registered</button>
+    <button type="button" class="tiny" data-select="none">Select none</button>
+    <button type="submit" class="tiny" name="action" value="unregister_selected" data-confirm="Unregister the selected contestants from this contest? Anyone who already has submissions is kept.">Unregister selected</button>
+    <button type="submit" class="tiny" name="action" value="register_selected">Register selected</button>
+    <button type="submit" class="tiny" name="action" value="unregister_unsubmitted" data-confirm="Unregister EVERYONE in this contest who has not submitted anything?">Unregister all who have not submitted</button>
+  </form>
   <div class="people-list">
   {% for p in participants %}
     <article class="person-record {{ 'disqualified-row' if p['disqualified'] else '' }}">
       <div class="person-primary">
+        <label class="select-box" title="Select"><input type="checkbox" name="ids" value="{{ p['id'] }}" form="bulk-form" data-registered="{{ 1 if p['registered'] else 0 }}"></label>
         <strong>{{ p['display_name'] }}</strong>
         <span>{{ p['department'] or 'Department not set' }}</span>
         {% if p['college'] %}<span>{{ p['college'] }}</span>{% endif %}
@@ -49,7 +59,7 @@
       <div class="person-actions-block">
         <span class="meta-label action-label">Action</span>
         <div class="person-actions">
-        <details class="action-panel"><summary>Profile</summary><form method="post" action="{{ url_for('admin_update_participant_profile', aid=p['id']) }}" class="profile-form clean-popover"><label>Name<input name="display_name" value="{{ p['display_name'] }}" required></label><label>Username<input name="username" value="{{ p['username'] }}" required></label><label>Email<input type="email" name="email" value="{{ p['email'] }}" placeholder="name@adnu.edu.ph"></label><label>Department<input name="department" value="{{ p['department'] }}" required></label><label>College<input name="college" value="{{ p['college'] }}"></label><label>School / institution<input name="affiliation" value="{{ p['affiliation'] }}"></label><label>Year level<input name="year_level" value="{{ p['year_level'] }}"></label><button class="button" type="submit">Save profile</button></form></details>
+        <details class="action-panel"><summary>Profile</summary><form method="post" action="{{ url_for('admin_update_participant_profile', aid=p['id']) }}" class="profile-form clean-popover"><label>Name<input name="display_name" value="{{ p['display_name'] }}" required></label><label>Username<input name="username" value="{{ p['username'] }}" required></label><label>Email<input type="email" name="email" value="{{ p['email'] }}" placeholder="name@adnu.edu.ph"></label><label>Department<input name="department" value="{{ p['department'] }}"></label><label>College<input name="college" value="{{ p['college'] }}"></label><label>School / institution<input name="affiliation" value="{{ p['affiliation'] }}"></label><label>Year level<input name="year_level" value="{{ p['year_level'] }}"></label><button class="button" type="submit">Save profile</button></form></details>
         <details class="action-panel"><summary>Contest</summary><div class="action-popover clean-popover">
           <form method="post" action="{{ url_for('admin_toggle_registration', aid=p['id']) }}"><button class="tiny wide" type="submit">{{ 'Unregister' if p['registered'] else 'Register' }}</button></form>
           {% if p['registered'] %}

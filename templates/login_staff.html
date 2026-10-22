@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+{% block title %}Staff sign in{% endblock %}
+{% block page_title %}Staff sign in{% endblock %}
+{% block content %}
+<section class="card auth-card signin-card">
+  <div class="login-brand">
+    <img class="login-logo login-wordmark" src="{{ url_for('static', filename='inquisitor_logo_white.png') }}" alt="Inquisitor">
+  </div>
+  <div class="signin-block">
+    <span class="eyebrow">Contest staff only</span>
+    <h2 class="signin-title">Director and judge sign in</h2>
+  </div>
+  <form method="post" class="form-stack">
+    <label>Username<input name="username" autocomplete="username" autofocus required></label>
+    <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+    <button class="button wide" type="submit">Sign in</button>
+  </form>
+  <p class="auth-help">Students sign in with their ADNU Google account on the main page.</p>
+  <div class="auth-platform-tagline">The Official Contest Management Platform of TACTICS x ACPC 2026</div>
+</section>
+{% endblock %}
