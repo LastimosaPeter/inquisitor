@@ -14,7 +14,7 @@
   <script>try{if(localStorage.getItem('inq-sidebar')==='collapsed')document.documentElement.classList.add('sidebar-collapsed')}catch(e){}</script>
   {% block head_extra %}{% endblock %}
 </head>
-<body class="{{ 'is-frozen' if cstate and cstate.phase=='FROZEN' else '' }}">
+<body class="{{ 'is-frozen' if cstate and cstate.phase=='FROZEN' else '' }}"{% if me %} data-notices="{{ url_for('v1.live_notices') }}" data-announcements-url="{{ url_for('v1.public_announcements') }}"{% endif %}>
 <div class="shell">
   <aside class="sidebar">
     <a class="brand" href="{{ url_for('index') }}" aria-label="Inquisitor home">

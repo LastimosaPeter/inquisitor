@@ -196,3 +196,81 @@
     if (msg && !window.confirm(msg)) e.preventDefault();
   });
 })();
+
+
+/* Notices: a new announcement reaches the people in the contest while they work. A toast slides in (it stays until it is closed), the
+   Announcements link in the side menu shows how many are unread, and the "Contest notice" banner appears and disappears by itself. */
+(function () {
+  var body = document.body, url = body.getAttribute('data-notices'), annUrl = body.getAttribute('data-announcements-url');
+  if (!url || !window.fetch) return;
+  function load(k, fallback) { try { var v = JSON.parse(localStorage.getItem(k) || 'null'); return v === null ? fallback : v; } catch (e) { return fallback; } }
+  function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  var KEY_READ = 'inq-ann-read', KEY_DISMISSED = 'inq-ann-dismissed';
+  var read = load(KEY_READ, 0), dismissed = load(KEY_DISMISSED, []);
+  var page = document.querySelector('[data-announcements-max]');
+  if (page) { read = Math.max(read, parseInt(page.getAttribute('data-announcements-max'), 10) || 0); save(KEY_READ, read); }
+
+  var host = document.createElement('div');
+  host.className = 'notice-toasts'; host.setAttribute('role', 'status'); host.setAttribute('aria-live', 'polite');
+  document.body.appendChild(host);
+
+  function setBadge(n) {
+    var link = annUrl ? document.querySelector('a[href="' + annUrl + '"]') : null;
+    if (!link) return;
+    var b = link.querySelector('.nav-badge');
+    if (!n) { if (b) b.remove(); return; }
+    if (!b) { b = document.createElement('span'); b.className = 'nav-badge'; link.appendChild(b); }
+    b.textContent = n > 9 ? '9+' : String(n);
+  }
+  function setBanner(text) {
+    var banner = document.querySelector('.emergency-banner');
+    if (!text) { if (banner) banner.remove(); return; }
+    if (!banner) {
+      banner = document.createElement('div'); banner.className = 'emergency-banner';
+      banner.appendChild(document.createElement('strong')).textContent = 'Contest notice';
+      banner.appendChild(document.createElement('span'));
+      var anchor = document.querySelector('.topbar');
+      if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(banner, anchor.nextSibling); else document.body.insertBefore(banner, document.body.firstChild);
+    }
+    var span = banner.querySelector('span'); if (span && span.textContent !== text) span.textContent = text;
+  }
+  function closeToast(el, id) {
+    if (id !== null) { dismissed.push(id); dismissed = dismissed.slice(-50); save(KEY_DISMISSED, dismissed); }
+    el.classList.add('leaving'); setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 200);
+  }
+  function showToast(item) {
+    if (host.querySelector('[data-id="' + item.id + '"]')) return;
+    var el = document.createElement('div'); el.className = 'notice-toast ' + (item.severity || 'info'); el.setAttribute('data-id', item.id);
+    var head = document.createElement('div'); head.className = 'notice-toast-head';
+    var label = document.createElement('span'); label.className = 'notice-toast-label'; label.textContent = 'New announcement'; head.appendChild(label);
+    var x = document.createElement('button'); x.type = 'button'; x.className = 'notice-toast-x'; x.setAttribute('aria-label', 'Dismiss'); x.textContent = '\u00d7'; head.appendChild(x);
+    var title = document.createElement('strong'); title.textContent = item.title;
+    var text = document.createElement('p'); text.textContent = item.body.length > 220 ? item.body.slice(0, 217) + '...' : item.body;
+    var go = document.createElement('a'); go.className = 'notice-toast-go'; go.href = annUrl || '#'; go.textContent = 'Read announcement';
+    el.appendChild(head); el.appendChild(title); el.appendChild(text); el.appendChild(go);
+    x.addEventListener('click', function () { closeToast(el, item.id); });
+    host.appendChild(el);
+    while (host.children.length > 3) host.removeChild(host.firstChild);
+  }
+  var busy = false;
+  function poll() {
+    if (busy || document.hidden) return;
+    busy = true;
+    fetch(url + '?since=' + read, { credentials: 'same-origin', cache: 'no-store' })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (d) {
+        setBadge(d.unread); setBanner(d.emergency || '');
+        var now = Date.now();
+        d.items.forEach(function (it) {
+          if (it.id <= read || dismissed.indexOf(it.id) >= 0) return;
+          var age = now - Date.parse(it.at);
+          if (age <= 15 * 60 * 1000 || it.pinned || it.severity !== 'info') showToast(it);   // an old, ordinary one only counts in the badge
+        });
+      })
+      .catch(function () {})
+      .then(function () { busy = false; });
+  }
+  poll();
+  setInterval(poll, 15000);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) poll(); });
+})();

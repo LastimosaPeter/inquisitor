@@ -645,6 +645,31 @@ def public_announcements():
     return render_template("v1_announcements.html", announcements=rows)
 
 
+@bp.get("/live/notices")
+def live_notices():
+    """What a signed-in browser polls every few seconds: the live 'Contest notice' banner text and the announcements it has not seen yet.
+    The announcements it may see follow the same audience rule as the Announcements page; ones the viewer published themselves are left out."""
+    core=_core(); me=core.current_user()
+    if not me: abort(401)
+    conn=core.get_db(); contest=core.active_contest(conn)
+    resp=jsonify({"emergency":"","latest_id":0,"unread":0,"items":[]})
+    resp.headers["Cache-Control"]="no-store"
+    if not contest: return resp
+    try: since=max(0,int(request.args.get("since","0")))
+    except ValueError: since=0
+    audience="participants" if me["role"]=="participant" else "all"
+    now=core.iso(core.utcnow())
+    base="contest_id=? AND (audience='all' OR audience=?) AND (expires_at IS NULL OR expires_at>?) AND (created_by IS NULL OR created_by!=?)"
+    args=(contest["id"],audience,now,me["id"])
+    unread=conn.execute(f"SELECT COUNT(*) FROM announcements WHERE {base} AND id>?",(*args,since)).fetchone()[0]
+    latest=conn.execute(f"SELECT COALESCE(MAX(id),0) FROM announcements WHERE {base}",args).fetchone()[0]
+    rows=conn.execute(f"SELECT id,title,body,severity,pinned,created_at FROM announcements WHERE {base} AND id>? ORDER BY id DESC LIMIT 5",(*args,since)).fetchall()
+    resp=jsonify({"emergency":contest["emergency_message"] or "","latest_id":latest,"unread":unread,
+                  "items":[{"id":r["id"],"title":r["title"],"body":r["body"][:600],"severity":r["severity"],"pinned":bool(r["pinned"]),"at":r["created_at"]} for r in reversed(rows)]})
+    resp.headers["Cache-Control"]="no-store"
+    return resp
+
+
 # ---------- Audit / disqualification history ----------
 @bp.get("/director/audit")
 @_admin_required
